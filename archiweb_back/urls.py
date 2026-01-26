@@ -2,7 +2,6 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from core.views import ClientViewSet
-# Import des vues JWT (Issue #3)
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
