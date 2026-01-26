@@ -11,8 +11,8 @@ class Coach(models.Model):
         return f"{self.user.first_name} {self.user.last_name} ({self.user.username})"
 
 # Modèle pour l'Athlète (Client)
-class Athlete(models.Model):
-    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, verbose_name="Coach référent", related_name='athletes')
+class Client(models.Model):
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients')
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
