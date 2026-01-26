@@ -15,7 +15,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-# Application definition
+# --- Application definition ---
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -25,16 +25,17 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
-    # --- Applications tierces (Ajouts) ---
+    # --- Applications tierces ---
     'rest_framework',      # Pour transformer Django en API
     'corsheaders',         # Pour autoriser les requêtes du Front (React)
+    'rest_framework_simplejwt', # Pour l'authentification JWT
     
     # --- Vos applications ---
     'core',                # Votre application principale
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',  # DOIT être tout en haut
+    'corsheaders.middleware.CorsMiddleware',  # DOIT être tout en haut pour le CORS
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -80,8 +81,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+LANGUAGE_CODE = 'fr-fr' # Mis en français pour plus de confort
+TIME_ZONE = 'Europe/Paris'
 USE_I18N = True
 USE_TZ = True
 
@@ -91,26 +92,31 @@ STATIC_URL = 'static/'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# --- CONFIGURATION CORS (Pour le développement) ---
-CORS_ALLOW_ALL_ORIGINS = True  # Autorise React à appeler l'API
+# --- CONFIGURATION CORS (Issue #4) ---
+# En développement, on autorise le port par défaut de Vite (React)
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+CORS_ALLOW_CREDENTIALS = True
 
-# --- CONFIGURATION REST FRAMEWORK ---
-REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny', # Permet de tester sans être bloqué par l'auth au début
-    ],
-}
+# --- CONFIGURATION REST FRAMEWORK (Issue #3) ---
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated', # Seuls les connectés ont accès
+        'rest_framework.permissions.IsAuthenticated', # Accès sécurisé par défaut
     ],
 }
 
+# --- CONFIGURATION SIMPLE JWT ---
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
