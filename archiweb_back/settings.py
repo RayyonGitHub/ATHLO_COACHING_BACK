@@ -1,5 +1,4 @@
-"""
-Django settings for archiweb_back project.
+"""Django settings for archiweb_back project.
 """
 from datetime import timedelta
 from pathlib import Path
