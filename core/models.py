@@ -2,8 +2,6 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-
-# --- Validateurs (le travail de ton collègue) ---
 def validate_non_negatif(value):
     if value <= 0:
         raise ValidationError("Cette valeur doit être supérieure à 0.")
