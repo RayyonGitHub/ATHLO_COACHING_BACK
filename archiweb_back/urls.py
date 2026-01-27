@@ -2,25 +2,19 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from core.views import ClientViewSet
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
+from core.views_auth import register_view, login_view
+from rest_framework_simplejwt.views import TokenRefreshView
 
-# Configuration du Router pour les clients (Issue #5)
 router = DefaultRouter()
-router.register(r'clients', ClientViewSet) # URL accessible via /api/clients/
+
+# CORRECTION ICI : Ajout de basename='client' 👇
+router.register(r'clients', ClientViewSet, basename='client')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    
-    # --- Routes API Métier ---
     path('api/', include(router.urls)),
     
-    # --- Routes API Authentification (Issue #3) ---
-    # Route pour se connecter et recevoir le Token (Login)
-    path('api/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    
-    # Route pour rafraîchir le Token quand il expire
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/register/', register_view, name='register'),
+    path('api/auth/login/', login_view, name='login'),
+    path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
