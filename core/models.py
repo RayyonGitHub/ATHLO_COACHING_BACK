@@ -42,6 +42,7 @@ class Client(models.Model):
     # Suivi et RGPD
     consentement_rgpd = models.BooleanField(default=False, verbose_name="Consentement RGPD")
     est_archive = models.BooleanField(default=False, verbose_name="Archivé")
+    tags = models.CharField(max_length=50, default="Standard", blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
