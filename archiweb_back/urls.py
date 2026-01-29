@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from core.views import ClientViewSet
+from core.views import ClientViewSet, CoachMeView
 from core.views_auth import register_view, login_view
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -17,4 +17,5 @@ urlpatterns = [
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
 ]

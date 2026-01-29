@@ -12,14 +12,21 @@ def validate_date_pas_dans_le_futur(value):
 
 # --- Modèles ---
 
+# models.py
 class Coach(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='coach_profile')
-    specialite = models.CharField(max_length=100, verbose_name="Spécialité", blank=True)
     telephone = models.CharField(max_length=15, verbose_name="Téléphone", blank=True)
+    
+    # --- AJOUTS POUR CORRIGER LA 500 ---
+    # On utilise JSONField pour stocker les listes de tags et les dictionnaires de prix
+    specialites_tags = models.JSONField(default=list, blank=True) 
+    offres_tarifs = models.JSONField(default=dict, blank=True)
+    
+    # On garde l'ancien champ par sécurité ou on le supprime si inutile
+    specialite = models.CharField(max_length=100, blank=True) 
 
     def __str__(self):
-        return f"{self.user.first_name} {self.user.last_name} ({self.user.username})"
-
+        return f"{self.user.username} - Coach"
 class Client(models.Model):
     # Relation (Ton travail)
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients')
