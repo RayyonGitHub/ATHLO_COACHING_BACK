@@ -6,9 +6,7 @@ class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
         fields = '__all__'
-        # Le coach est rempli par le serveur, pas par le formulaire
-        read_only_fields = ['coach']
-
+        read_only_fields = ['coach', 'user']
 # Serializer pour l'Onboarding du Coach (Issue #F2 Front)
 class CoachSerializer(serializers.ModelSerializer):
     class Meta:

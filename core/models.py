@@ -29,7 +29,9 @@ class Coach(models.Model):
         return f"{self.user.username} - Coach"
 class Client(models.Model):
     # Relation (Ton travail)
-    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='client_profile', null=True, blank=True)
+    onboarding_data = models.JSONField(default=dict, blank=True)
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients', null=True, blank=True)
     
     # Identité (Fusionné avec les validateurs du collègue)
     nom = models.CharField(max_length=100)
@@ -37,7 +39,7 @@ class Client(models.Model):
     email = models.EmailField(unique=True)
     telephone = models.CharField(max_length=20, blank=True)
     date_naissance = models.DateField(null=True, blank=True, validators=[validate_date_pas_dans_le_futur])
-
+    age = models.PositiveIntegerField(null=True, blank=True)
     # Données physiologiques (Validées)
     taille = models.PositiveIntegerField(null=True, blank=True, validators=[validate_non_negatif], help_text="Taille en cm")
     poids = models.FloatField(null=True, blank=True, validators=[validate_non_negatif], help_text="Poids en kg")

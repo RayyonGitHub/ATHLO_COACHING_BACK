@@ -1,10 +1,10 @@
 from rest_framework import viewsets, status
-from rest_framework.views import APIView # <--- IMPORTANT : Ajoute cet import
-from rest_framework.response import Response # <--- IMPORTANT : Ajoute cet import
+from rest_framework.views import APIView 
+from rest_framework.response import Response 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from .models import Client, Coach
-from .serializers import ClientSerializer, CoachSerializer # <--- N'oublie pas CoachSerializer
+from .serializers import ClientSerializer, CoachSerializer 
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
@@ -48,3 +48,25 @@ class CoachMeView(APIView):
         
         # En cas d'erreur (ex: mauvais format de données), on renvoie les détails (400)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class AthleteMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        # On récupère le client lié à l'user. 
+        # Si absent, on le crée avec les infos de base de l'User
+        client, created = Client.objects.get_or_create(
+            user=request.user,
+            defaults={
+                'email': request.user.email,
+                'nom': request.user.last_name,
+                'prenom': request.user.first_name
+            }
+        )
+        
+        # On passe partial=True pour ne mettre à jour que ce qu'on reçoit
+        serializer = ClientSerializer(client, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=200)
+        
+        return Response(serializer.errors, status=400)
