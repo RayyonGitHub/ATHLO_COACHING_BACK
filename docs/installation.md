@@ -43,7 +43,7 @@ pip install -r requirements.txt
 ```
 ### Pour appliquer des migrations :
 ```bash
-python manage.py makemigrations core
+python manage.py makemigrations 
 
 python manage.py migrate
 ```
@@ -54,3 +54,4 @@ python manage.py runserver
 
 
 Le serveur sera accessible par défaut à l'URL : http://127.0.0.1:8000
+
