@@ -39,9 +39,9 @@ Le projet fait partie du programme **ArchiWeb 2026** et vise à fournir une arch
 
 ## Documentations
 
-- installation.md : décrit comment installer et configurer le Front et le Back pour que l’application fonctionne sur un poste de développement.
-- architecture.md : explique le fonctionnement global de l’application et les choix techniques faits pour sa conception et son organisation.
-- modele_donnees.md : présente le schéma des données et décrit chaque entité et ses relations dans l’application.
+- [installation.md](installation.md) : décrit comment installer et configurer le Front et le Back pour que l’application fonctionne sur un poste de développement.
+- [architecture.md](architecture.md)  : explique le fonctionnement global de l’application et les choix techniques faits pour sa conception et son organisation.
+- [modele_donnees.md](modele_donnees.md) : présente le schéma des données et décrit chaque entité et ses relations dans l’application.
 
 ---
 
@@ -52,5 +52,6 @@ https://stitch.withgoogle.com/projects/15655097857567584238
 ---
 
 ## Auteur
+
 
 - **Groupe 6 ArchiWeb 2026**
