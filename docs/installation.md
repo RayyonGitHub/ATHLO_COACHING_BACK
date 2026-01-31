@@ -43,11 +43,14 @@ pip install -r requirements.txt
 ```
 ### Pour appliquer des migrations :
 ```bash
+python manage.py makemigrations core
+
 python manage.py migrate
 ```
 ### 4. Lancer le serveur
 ```bash
 python manage.py runserver
 ```
+
 
 Le serveur sera accessible par défaut à l'URL : http://127.0.0.1:8000
