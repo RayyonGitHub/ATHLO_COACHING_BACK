@@ -1,7 +1,8 @@
+from django.contrib.auth.models import User
 from rest_framework import viewsets, status
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser,AllowAny
 from rest_framework.exceptions import PermissionDenied
 from .models import Client, Coach, Exercice
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer
@@ -77,3 +78,17 @@ class ExerciceViewSet(viewsets.ModelViewSet):
     # mais il faut être connecté pour modifier (POST/PUT/DELETE)
     permission_classes = [IsAuthenticatedOrReadOnly]
     filterset_fields = ['categorie']
+
+class DemoStatsView(APIView):
+    permission_classes = [AllowAny] 
+
+    def get(self, request):
+        # On renvoie des données pour illustrer la valeur ajoutée
+        data = {
+            "total_exercices": Exercice.objects.count(),
+            "total_coachs": Coach.objects.count(),
+            "utilisateurs_actifs": User.objects.count() + 124, # Chiffre démo
+            "programmes_crees": 450, # Donnée fictive pour la démo
+            "message": "Ceci est une démo. Connectez-vous pour accéder à votre suivi personnalisé."
+        }
+        return Response(data)
