@@ -3,7 +3,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from core.views import ClientViewSet, CoachMeView, AthleteMeView
 from core.views_auth import register_view, login_view
-from core.views_admin import admin_login_view, admin_coach_list, admin_toggle_coach_status
+from core.views_admin import admin_login_view, admin_coach_list, admin_stats_view, admin_toggle_coach_status
 from rest_framework_simplejwt.views import TokenRefreshView
 
 router = DefaultRouter()
@@ -22,6 +22,7 @@ urlpatterns = [
     
     # ROUTES SUPER-ADMIN (Isolées)
     path('api/admin/login/', admin_login_view, name='admin-login'),
+    path('api/admin/stats/', admin_stats_view, name='admin-stats'),
     path('api/admin/coachs/', admin_coach_list, name='admin-coach-list'),
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 ]
