@@ -56,3 +56,18 @@ class Client(models.Model):
 
     def __str__(self):
         return f"{self.prenom} {self.nom}"
+class Exercice(models.Model):
+    CATEGORIES = [
+        ('force', 'Force / Musculation'),
+        ('cardio', 'Cardio / Endurance'),
+        ('souplesse', 'Souplesse / Mobilité'),
+    ]
+
+    nom = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    categorie = models.CharField(max_length=20, choices=CATEGORIES, default='force')
+    demo_url = models.URLField(max_length=500, blank=True, help_text="Lien vers la vidéo de démonstration")
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.nom} ({self.categorie})"
