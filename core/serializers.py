@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Client, Coach
+from .models import Client, Coach,Exercice
 
 # Serializer pour l'Annuaire (Issue #5)
 class ClientSerializer(serializers.ModelSerializer):
@@ -13,3 +13,8 @@ class CoachSerializer(serializers.ModelSerializer):
         model = Coach
         # Tous les champs DOIVENT être indentés sous 'class Meta'
         fields = ['specialites_tags', 'offres_tarifs', 'telephone', 'specialite']
+
+class ExerciceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exercice
+        fields = '__all__'

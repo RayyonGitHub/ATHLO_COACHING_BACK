@@ -1,10 +1,10 @@
 from rest_framework import viewsets, status
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser
 from rest_framework.exceptions import PermissionDenied
-from .models import Client, Coach
-from .serializers import ClientSerializer, CoachSerializer 
+from .models import Client, Coach, Exercice
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
@@ -70,3 +70,10 @@ class AthleteMeView(APIView):
             return Response(serializer.data, status=200)
         
         return Response(serializer.errors, status=400)
+class ExerciceViewSet(viewsets.ModelViewSet):
+    queryset = Exercice.objects.all()
+    serializer_class = ExerciceSerializer
+    # IsAuthenticatedOrReadOnly : Tout le monde peut voir (GET), 
+    # mais il faut être connecté pour modifier (POST/PUT/DELETE)
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filterset_fields = ['categorie']

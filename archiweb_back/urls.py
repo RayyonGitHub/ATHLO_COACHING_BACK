@@ -1,14 +1,15 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from core.views import ClientViewSet, CoachMeView, AthleteMeView
+from core.views import ClientViewSet, CoachMeView, AthleteMeView,ExerciceViewSet
 from core.views_auth import register_view, login_view
 from rest_framework_simplejwt.views import TokenRefreshView
 
 router = DefaultRouter()
 
-# CORRECTION ICI : Ajout de basename='client' 👇
+# CORRECTION ICI : Ajout de basename='client' 
 router.register(r'clients', ClientViewSet, basename='client')
+router.register(r'exercices', ExerciceViewSet, basename='exercice') 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
