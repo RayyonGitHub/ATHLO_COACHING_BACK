@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_filters',
     
     # --- Applications tierces ---
     'rest_framework',      # Pour transformer Django en API
@@ -103,10 +104,12 @@ CORS_ALLOW_CREDENTIALS = True
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated', # Accès sécurisé par défaut
     ],
+    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
 }
 
 # --- CONFIGURATION SIMPLE JWT ---
@@ -119,3 +122,6 @@ SIMPLE_JWT = {
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+# Force Django à rester sur l'API après la connexion/déconnexion
+LOGIN_REDIRECT_URL = '/api/exercices/'
+LOGOUT_REDIRECT_URL = '/api/exercices/'
