@@ -4,10 +4,12 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 # On importe toutes les vues combinées (les tiennes + celles de l'issue)
+# N'oublie pas d'ajouter PerformanceCreateView à la fin de cette liste !
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, 
-    AthleteDashboardView, DemoStatsView, CoachAnalyticsView
+    AthleteDashboardView, DemoStatsView, CoachAnalyticsView,
+    PerformanceCreateView # <-- NOUVEAU ICI
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -41,6 +43,9 @@ urlpatterns = [
 
     # --- Dashboard Athlète ---
     path('api/athlete/dashboard-stats/', AthleteDashboardView.as_view(), name='athlete-dashboard-stats'),
+    
+    # --- NOUVEAU : Tracking de Performance ---
+    path('api/athlete/performance/record/', PerformanceCreateView.as_view(), name='record-performance'),
 
     # ROUTES SUPER-ADMIN (Isolées)
     path('api/admin/login/', admin_login_view, name='admin-login'),

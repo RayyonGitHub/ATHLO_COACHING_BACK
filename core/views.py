@@ -5,14 +5,15 @@ from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics # Ajout de generics ici
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
 from rest_framework.exceptions import PermissionDenied
 
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer
+# Ajout de Performance et PerformanceSerializer
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer
 
 
 # --- Vues Existantes ---
@@ -111,10 +112,9 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Seuls les coachs peuvent créer un programme.")
 
 
-# --- VUE POUR LE CRÉATEUR DE SÉANCE (Issue #10) ---
+# --- VUE POUR LE CRÉATEUR DE SÉANCE ---
 
 class SeanceViewSet(viewsets.ModelViewSet):
-    """ ViewSet pour gérer la création de séances complexes avec exercices imbriqués """
     serializer_class = SeanceSerializer
     permission_classes = [IsAuthenticated]
 
@@ -126,7 +126,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
             return Seance.objects.filter(programme__athlete=user.client_profile)
         return Seance.objects.none()
 
-    @transaction.atomic # Garantie que si un exercice plante, la séance n'est pas sauvegardée à moitié
+    @transaction.atomic 
     def create(self, request, *args, **kwargs):
         data = request.data
         programme_id = data.get('programme_id')
@@ -138,11 +138,9 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
         programme = get_object_or_404(Programme, id=programme_id)
 
-        # Sécurité : vérifier que le coach est le propriétaire
         if not hasattr(request.user, 'coach_profile') or programme.coach != request.user.coach_profile:
             raise PermissionDenied("Vous n'êtes pas autorisé à ajouter une séance à ce programme.")
 
-        # Calcul automatique de l'ordre (Jour 1, Jour 2...)
         ordre_seance = Seance.objects.filter(programme=programme).count() + 1
 
         seance = Seance.objects.create(
@@ -151,7 +149,6 @@ class SeanceViewSet(viewsets.ModelViewSet):
             ordre=ordre_seance
         )
 
-        # Création des exercices liés
         for exo_data in exercices_data:
             exercice = get_object_or_404(Exercice, id=exo_data.get('exercice_id'))
             SeanceExercice.objects.create(
@@ -171,7 +168,6 @@ class SeanceViewSet(viewsets.ModelViewSet):
 # --- VUES ANALYTICS ET DASHBOARD ---
 
 class AthleteDashboardView(APIView):
-    """ Renvoie toutes les infos condensées pour la page d'accueil de l'athlète """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -181,7 +177,6 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
-        # Trouver la prochaine séance non complétée
         prochaine_seance = Seance.objects.filter(
             programme__athlete=client,
             est_completee=False
@@ -215,18 +210,15 @@ class CoachAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # 1. Vérifier que l'utilisateur est bien un coach
         if not hasattr(request.user, 'coach_profile'):
             return Response({"error": "Accès réservé aux coachs."}, status=403)
         
         coach = request.user.coach_profile
         today = timezone.now().date()
-        seven_days_ago = today - timedelta(days=6) # Pour avoir une période de 7 jours
+        seven_days_ago = today - timedelta(days=6) 
 
-        # 2. Nombre total d'athlètes (Clients) assignés
         total_athletes = coach.clients.count()
 
-        # 3. Calcul du taux de complétion sur les 7 derniers jours
         seances_7_jours = Seance.objects.filter(
             programme__coach=coach,
             jour_prevu__range=[seven_days_ago, today]
@@ -239,10 +231,8 @@ class CoachAnalyticsView(APIView):
         if total_seances > 0:
             completion_rate = round((seances_completees / total_seances) * 100, 1)
         
-        # 5. Calcul du volume total (Estimation : 450 calories par séance complétée)
         total_volume = seances_completees * 450
         
-        # 4. Données historiques pour le graphique (7 derniers jours)
         chart_data = []
         for i in range(7):
             date_target = seven_days_ago + timedelta(days=i)
@@ -263,3 +253,16 @@ class CoachAnalyticsView(APIView):
             "chart_data": chart_data,
             "period": "7 derniers jours"
         })
+
+# --- NOUVELLE VUE : ISSUE #14 (Enregistrement de Performance) ---
+
+class PerformanceCreateView(generics.CreateAPIView):
+    serializer_class = PerformanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        # On lie automatiquement la performance au client connecté
+        if hasattr(self.request.user, 'client_profile'):
+            serializer.save(client=self.request.user.client_profile)
+        else:
+            raise PermissionDenied("Seul un athlète peut enregistrer une performance.")
