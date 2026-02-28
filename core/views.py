@@ -1,3 +1,7 @@
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models import Count, Q
+
 from django.contrib.auth.models import User
 from rest_framework import viewsets, status
 from rest_framework.views import APIView 
@@ -139,3 +143,56 @@ class AthleteDashboardView(APIView):
             }
         }
         return Response(data)
+    
+class CoachAnalyticsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # 1. Vérifier que l'utilisateur est bien un coach
+        if not hasattr(request.user, 'coach_profile'):
+            return Response({"error": "Accès réservé aux coachs."}, status=403)
+        
+        coach = request.user.coach_profile
+        today = timezone.now().date()
+        seven_days_ago = today - timedelta(days=6) # Pour avoir une période de 7 jours
+
+        # 2. Nombre total d'athlètes (Clients) assignés
+        total_athletes = coach.clients.count()
+
+        # 3. Calcul du taux de complétion sur les 7 derniers jours
+        # On récupère toutes les séances des programmes créés par ce coach
+        seances_7_jours = Seance.objects.filter(
+            programme__coach=coach,
+            jour_prevu__range=[seven_days_ago, today]
+        )
+
+        total_seances = seances_7_jours.count()
+        seances_completees = seances_7_jours.filter(est_completee=True).count()
+
+        completion_rate = 0
+        if total_seances > 0:
+            completion_rate = round((seances_completees / total_seances) * 100, 1)
+        # 5. Calcul du volume total (Estimation : 450 calories par séance complétée)
+        total_volume = seances_completees * 450
+        # 4. Données historiques pour le graphique (7 derniers jours)
+        chart_data = []
+        for i in range(7):
+            date_target = seven_days_ago + timedelta(days=i)
+            # On compte les séances complétées pour ce jour précis
+            count_day = seances_7_jours.filter(
+                jour_prevu=date_target, 
+                est_completee=True
+            ).count()
+            
+            chart_data.append({
+                "day": date_target.strftime('%a'), # Ex: "Mon", "Tue"...
+                "sessions": count_day
+            })
+
+        return Response({
+            "total_athletes": total_athletes,
+            "completion_rate": completion_rate,
+            "total_volume": total_volume,  
+            "chart_data": chart_data,
+            "period": "7 derniers jours"
+        })

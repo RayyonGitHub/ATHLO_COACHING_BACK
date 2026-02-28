@@ -6,7 +6,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 # On importe toutes les vues (les tiennes + les leurs)
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
-    ExerciceViewSet, ProgrammeViewSet, AthleteDashboardView, DemoStatsView
+    ExerciceViewSet, ProgrammeViewSet, AthleteDashboardView, DemoStatsView,CoachAnalyticsView
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -46,4 +46,5 @@ urlpatterns = [
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 
     path('api-auth/', include('rest_framework.urls')),
+    path('api/coach/analytics/', CoachAnalyticsView.as_view(), name='coach-analytics'),
 ]
