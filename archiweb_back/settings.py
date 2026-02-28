@@ -43,6 +43,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    
 ]
 
 ROOT_URLCONF = 'archiweb_back.urls'
@@ -125,3 +126,4 @@ SIMPLE_JWT = {
 # Force Django à rester sur l'API après la connexion/déconnexion
 LOGIN_REDIRECT_URL = '/api/exercices/'
 LOGOUT_REDIRECT_URL = '/api/exercices/'
+CORS_ALLOW_ALL_ORIGINS = True
