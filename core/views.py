@@ -87,8 +87,9 @@ class DemoStatsView(APIView):
         data = {
             "total_exercices": Exercice.objects.count(),
             "total_coachs": Coach.objects.count(),
-            "utilisateurs_actifs": User.objects.count() + 124, # Chiffre démo
+            "utilisateurs_actifs": User.objects.count() , # Chiffre démo
             "programmes_crees": 450, # Donnée fictive pour la démo
+            #"programmes_crees": Programme.objects.count() if 'Programme' in locals() else 450,
             "message": "Ceci est une démo. Connectez-vous pour accéder à votre suivi personnalisé."
         }
         return Response(data)
