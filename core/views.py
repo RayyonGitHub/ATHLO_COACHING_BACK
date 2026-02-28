@@ -1,13 +1,14 @@
+from django.contrib.auth.models import User
 from rest_framework import viewsets, status
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser,AllowAny
 from rest_framework.exceptions import PermissionDenied
-
 from .models import Client, Coach, Exercice, Programme, Seance
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer
 
 # --- Vues Existantes ---
+
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
@@ -57,15 +58,29 @@ class AthleteMeView(APIView):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=200)
-        return Response(serializer.errors, status=400)
+# --- VUE DÉMO 
 
+class DemoStatsView(APIView):
+    permission_classes = [AllowAny] 
 
-# --- NOUVELLES VUES (Issue #9 et #10) ---
+    def get(self, request):
+        data = {
+            "total_exercices": Exercice.objects.count(),
+            "total_coachs": Coach.objects.count(),
+            "utilisateurs_actifs": User.objects.count(),
+            # Maintenant que le modèle existe, on peut utiliser le vrai count
+            "programmes_crees": Programme.objects.count(), 
+            "message": "Ceci est une démo. Connectez-vous pour accéder à votre suivi personnalisé."
+        }
+        return Response(data)
+
+# --- NOUVELLES VUES 
 
 class ExerciceViewSet(viewsets.ModelViewSet):
     queryset = Exercice.objects.all()
     serializer_class = ExerciceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrReadOnly] # On garde ta permission plus souple
+    filterset_fields = ['categorie']
 
 class ProgrammeViewSet(viewsets.ModelViewSet):
     serializer_class = ProgrammeSerializer
@@ -73,10 +88,8 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # Si c'est un coach, il voit les programmes qu'il a créés
         if hasattr(user, 'coach_profile'):
             return Programme.objects.filter(coach=user.coach_profile)
-        # Si c'est un athlète, il voit les programmes qu'on lui a assignés
         elif hasattr(user, 'client_profile'):
             return Programme.objects.filter(athlete=user.client_profile)
         return Programme.objects.none()
@@ -86,8 +99,6 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
             serializer.save(coach=self.request.user.coach_profile)
         else:
             raise PermissionDenied("Seuls les coachs peuvent créer un programme.")
-
-# --- VUE SPÉCIALE DASHBOARD FRONT-END ---
 
 class AthleteDashboardView(APIView):
     """ Renvoie toutes les infos condensées pour la page d'accueil de l'athlète """
@@ -100,7 +111,7 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
-        # 1. Trouver la prochaine séance non complétée
+        # Trouver la prochaine séance non complétée
         prochaine_seance = Seance.objects.filter(
             programme__athlete=client,
             est_completee=False
@@ -108,17 +119,15 @@ class AthleteDashboardView(APIView):
 
         seance_data = None
         if prochaine_seance:
-            # On calcule des stats fictives basées sur le nombre d'exercices
             nb_exos = prochaine_seance.exercices_details.count()
             seance_data = {
                 "id": prochaine_seance.id,
                 "titre": prochaine_seance.titre,
                 "programme_titre": prochaine_seance.programme.titre,
-                "duree_estimee": nb_exos * 10 if nb_exos > 0 else 45, # 10 min par exo
+                "duree_estimee": nb_exos * 10 if nb_exos > 0 else 45,
                 "calories_estimees": nb_exos * 80 if nb_exos > 0 else 450,
             }
 
-        # 2. On prépare le gros JSON pour ton Front-end
         data = {
             "prenom": client.prenom or user.username,
             "prochaine_seance": seance_data,

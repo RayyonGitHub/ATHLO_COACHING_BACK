@@ -51,10 +51,6 @@ class Client(models.Model):
 
     def __str__(self):
         return f"{self.prenom} {self.nom}"
-
-
-# --- Modèles Sportifs (Issue #9 et #10) ---
-
 class Exercice(models.Model):
     CATEGORIES = [
         ('FORCE', 'Force & Musculation'),
@@ -78,7 +74,6 @@ class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
     description = models.TextField(blank=True)
     
-    # Liens ultra-puissants vers tes modèles Coach et Client
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='programmes_crees')
     athlete = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='programmes_assignes', null=True, blank=True)
     
