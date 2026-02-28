@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice
+# Ajout de Performance dans les imports
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance
 
 # Serializer pour l'Annuaire
 class ClientSerializer(serializers.ModelSerializer):
@@ -14,7 +15,7 @@ class CoachSerializer(serializers.ModelSerializer):
         model = Coach
         fields = ['specialites_tags', 'offres_tarifs', 'telephone', 'specialite']
 
-# --- NOUVEAUX SERIALIZERS (Issue #9 et #10) ---
+# --- SERIALIZERS SPORTIFS ---
 
 class ExerciceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -30,7 +31,7 @@ class SeanceExerciceSerializer(serializers.ModelSerializer):
 
 class SeanceSerializer(serializers.ModelSerializer):
     exercices_details = SeanceExerciceSerializer(many=True, read_only=True)
-    volume_total = serializers.ReadOnlyField() # On expose le calcul automatique
+    volume_total = serializers.ReadOnlyField()
 
     class Meta:
         model = Seance
@@ -47,3 +48,18 @@ class ProgrammeSerializer(serializers.ModelSerializer):
         model = Programme
         fields = '__all__'
         read_only_fields = ['coach']
+
+# --- NOUVEAU SERIALIZER : ISSUE #14 ---
+class PerformanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Performance
+        fields = [
+            'id', 
+            'seance_exercice', 
+            'series_realisees', 
+            'reps_realisees', 
+            'poids_utilise', 
+            'notes_athlete', 
+            'date_enregistrement'
+        ]
+        read_only_fields = ['id', 'date_enregistrement']

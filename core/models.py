@@ -17,7 +17,6 @@ class Coach(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='coach_profile')
     telephone = models.CharField(max_length=15, verbose_name="Téléphone", blank=True)
     
-    # On utilise JSONField pour stocker les listes de tags et les dictionnaires de prix
     specialites_tags = models.JSONField(default=list, blank=True) 
     offres_tarifs = models.JSONField(default=dict, blank=True)
     
@@ -51,6 +50,7 @@ class Client(models.Model):
 
     def __str__(self):
         return f"{self.prenom} {self.nom}"
+
 class Exercice(models.Model):
     CATEGORIES = [
         ('FORCE', 'Force & Musculation'),
@@ -69,7 +69,6 @@ class Exercice(models.Model):
     def __str__(self):
         return f"{self.nom} ({self.get_categorie_display()})"
 
-
 class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
     description = models.TextField(blank=True)
@@ -85,7 +84,6 @@ class Programme(models.Model):
         nom_athlete = f"{self.athlete.prenom} {self.athlete.nom}" if self.athlete else "Aucun"
         return f"{self.titre} (Coach: {self.coach.user.username} -> Athlète: {nom_athlete})"
 
-
 class Seance(models.Model):
     programme = models.ForeignKey(Programme, on_delete=models.CASCADE, related_name='seances')
     titre = models.CharField(max_length=150, verbose_name="Titre de la séance (ex: Haut du corps)")
@@ -93,18 +91,16 @@ class Seance(models.Model):
     ordre = models.PositiveIntegerField(default=1, help_text="Jour 1, Jour 2, etc.")
     jour_prevu = models.DateField(null=True, blank=True, help_text="Date exacte si planifié dans le calendrier")
     est_completee = models.BooleanField(default=False)
+    
+    commentaire_coach = models.TextField(blank=True, help_text="Notes du coach après la séance")
+    ressenti_client = models.PositiveIntegerField(null=True, blank=True, help_text="Note de difficulté de 1 à 10 laissée par l'athlète")
+    notes_client = models.TextField(blank=True, help_text="Commentaires de l'athlète")
 
     class Meta:
         ordering = ['ordre', 'jour_prevu']
 
     def __str__(self):
         return f"Jour {self.ordre}: {self.titre} ({self.programme.titre})"
-    commentaire_coach = models.TextField(blank=True, help_text="Notes du coach après la séance")
-    ressenti_client = models.PositiveIntegerField(
-        null=True, blank=True, 
-        help_text="Note de difficulté de 1 à 10 laissée par l'athlète"
-    )
-    notes_client = models.TextField(blank=True, help_text="Commentaires de l'athlète")
 
     def calculer_volume_total(self):
         """ Calcule le tonnage total soulevé durant la séance """
@@ -112,15 +108,10 @@ class Seance(models.Model):
         exercices = self.exercices_details.all()
         for exo in exercices:
             try:
-                # On tente de convertir le poids (ex: "20kg") en nombre
-                # Nettoyage simple : on garde les chiffres et le point
                 poids_str = "".join(filter(lambda x: x.isdigit() or x == '.', str(exo.poids)))
                 poids_val = float(poids_str) if poids_str else 0
-                
-                # On fait de même pour les répétitions (gestion des plages type "8-12")
-                rep_str = str(exo.repetitions).split('-')[0] # On prend le min si plage
+                rep_str = str(exo.repetitions).split('-')[0]
                 rep_val = int("".join(filter(str.isdigit, rep_str)))
-                
                 total += exo.series * rep_val * poids_val
             except (ValueError, IndexError):
                 continue
@@ -129,7 +120,6 @@ class Seance(models.Model):
     @property
     def volume_total(self):
         return self.calculer_volume_total()
-
 
 class SeanceExercice(models.Model):
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='exercices_details')
@@ -147,3 +137,22 @@ class SeanceExercice(models.Model):
 
     def __str__(self):
         return f"{self.exercice.nom} - {self.series}x{self.repetitions}"
+
+# --- NOUVEAU MODÈLE : ISSUE #14 (Tracking de Performance) ---
+
+class Performance(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='performances')
+    seance_exercice = models.ForeignKey(SeanceExercice, on_delete=models.CASCADE, related_name='performances')
+    
+    series_realisees = models.PositiveIntegerField(default=0)
+    reps_realisees = models.PositiveIntegerField(default=0)
+    poids_utilise = models.FloatField(default=0.0)
+    
+    notes_athlete = models.TextField(blank=True, null=True)
+    date_enregistrement = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_enregistrement']
+
+    def __str__(self):
+        return f"Perf de {self.client.prenom} - {self.seance_exercice.exercice.nom}"
