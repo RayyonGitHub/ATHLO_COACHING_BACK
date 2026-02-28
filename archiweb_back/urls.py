@@ -6,7 +6,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 # On combine tous les imports des deux branches
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
-    ExerciceViewSet, ProgrammeViewSet, AthleteDashboardView
+    ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, AthleteDashboardView
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -18,6 +18,7 @@ router = DefaultRouter()
 router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'exercices', ExerciceViewSet, basename='exercice')
 router.register(r'programmes', ProgrammeViewSet, basename='programme')
+router.register(r'seances', SeanceViewSet, basename='seance') # <-- NOUVELLE ROUTE ICI
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -32,7 +33,7 @@ urlpatterns = [
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
     
-    # Dashboard Athlète (Nouveau)
+    # Dashboard Athlète
     path('api/athlete/dashboard-stats/', AthleteDashboardView.as_view(), name='athlete-dashboard-stats'),
 
     # ROUTES SUPER-ADMIN (Isolées)
