@@ -177,6 +177,7 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
+        # 1. Trouver la prochaine séance non complétée
         prochaine_seance = Seance.objects.filter(
             programme__athlete=client,
             est_completee=False
@@ -193,13 +194,52 @@ class AthleteDashboardView(APIView):
                 "calories_estimees": nb_exos * 80 if nb_exos > 0 else 450,
             }
 
+        # --- DÉBUT DES VRAIS CALCULS (ISSUE #17) ---
+        
+        today = timezone.now().date()
+        
+        # Récupérer toutes les performances du jour
+        performances_du_jour = Performance.objects.filter(
+            client=client,
+            date_enregistrement__date=today
+        )
+
+        # Calcul des Calories brûlées
+        total_series_jour = sum(perf.series_realisees for perf in performances_du_jour)
+        calories_brulees = total_series_jour * 15
+
+        # Calcul de la Complétion du jour (%)
+        completion_jour = 0
+        seance_du_jour = Seance.objects.filter(programme__athlete=client, jour_prevu=today).first()
+        
+        if seance_du_jour:
+            total_exos_prevus = seance_du_jour.exercices_details.count()
+            exos_valides = performances_du_jour.values('seance_exercice').distinct().count()
+            
+            if total_exos_prevus > 0:
+                completion_jour = int((exos_valides / total_exos_prevus) * 100)
+                if exos_valides >= total_exos_prevus and not seance_du_jour.est_completee:
+                    seance_du_jour.est_completee = True
+                    seance_du_jour.save()
+
+        # 💡 NOUVEAU : Calcul Dynamique du BMR (Métabolisme) pour calories_max
+        calories_max_objectif = 2400  # Valeur par défaut si profil incomplet
+        
+        if client.poids and client.taille and client.age:
+            # Formule de Mifflin-St Jeor : (10 × Poids) + (6.25 × Taille) - (5 × Age) + 5
+            bmr = (10 * client.poids) + (6.25 * client.taille) - (5 * client.age) + 5
+            # On multiplie par 1.55 pour correspondre à une personne avec une activité sportive modérée
+            calories_max_objectif = int(bmr * 1.55)
+
+        # --- FIN DES CALCULS ---
+
         data = {
             "prenom": client.prenom or user.username,
             "prochaine_seance": seance_data,
             "stats_sante": {
-                "completion_jour": 75,
-                "calories": 1840,
-                "calories_max": 2400,
+                "completion_jour": completion_jour,
+                "calories": calories_brulees,
+                "calories_max": calories_max_objectif, # Vraie donnée basée sur le profil !
                 "recuperation": 94,
             }
         }
