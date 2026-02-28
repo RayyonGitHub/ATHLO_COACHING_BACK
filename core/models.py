@@ -99,6 +99,36 @@ class Seance(models.Model):
 
     def __str__(self):
         return f"Jour {self.ordre}: {self.titre} ({self.programme.titre})"
+    commentaire_coach = models.TextField(blank=True, help_text="Notes du coach après la séance")
+    ressenti_client = models.PositiveIntegerField(
+        null=True, blank=True, 
+        help_text="Note de difficulté de 1 à 10 laissée par l'athlète"
+    )
+    notes_client = models.TextField(blank=True, help_text="Commentaires de l'athlète")
+
+    def calculer_volume_total(self):
+        """ Calcule le tonnage total soulevé durant la séance """
+        total = 0
+        exercices = self.exercices_details.all()
+        for exo in exercices:
+            try:
+                # On tente de convertir le poids (ex: "20kg") en nombre
+                # Nettoyage simple : on garde les chiffres et le point
+                poids_str = "".join(filter(lambda x: x.isdigit() or x == '.', str(exo.poids)))
+                poids_val = float(poids_str) if poids_str else 0
+                
+                # On fait de même pour les répétitions (gestion des plages type "8-12")
+                rep_str = str(exo.repetitions).split('-')[0] # On prend le min si plage
+                rep_val = int("".join(filter(str.isdigit, rep_str)))
+                
+                total += exo.series * rep_val * poids_val
+            except (ValueError, IndexError):
+                continue
+        return total
+
+    @property
+    def volume_total(self):
+        return self.calculer_volume_total()
 
 
 class SeanceExercice(models.Model):

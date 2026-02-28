@@ -1,18 +1,21 @@
 from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Count, Q
-
 from django.contrib.auth.models import User
+from django.shortcuts import get_object_or_404
+from django.db import transaction
+
 from rest_framework import viewsets, status
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser,AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
 from rest_framework.exceptions import PermissionDenied
-from .models import Client, Coach, Exercice, Programme, Seance
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer
+
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer
+
 
 # --- Vues Existantes ---
-
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
@@ -62,7 +65,10 @@ class AthleteMeView(APIView):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=200)
-# --- VUE DÉMO 
+        return Response(serializer.errors, status=400)
+
+
+# --- VUE DÉMO ---
 
 class DemoStatsView(APIView):
     permission_classes = [AllowAny] 
@@ -72,18 +78,18 @@ class DemoStatsView(APIView):
             "total_exercices": Exercice.objects.count(),
             "total_coachs": Coach.objects.count(),
             "utilisateurs_actifs": User.objects.count(),
-            # Maintenant que le modèle existe, on peut utiliser le vrai count
             "programmes_crees": Programme.objects.count(), 
             "message": "Ceci est une démo. Connectez-vous pour accéder à votre suivi personnalisé."
         }
         return Response(data)
 
-# --- NOUVELLES VUES 
+
+# --- NOUVELLES VUES SPORTIVES ---
 
 class ExerciceViewSet(viewsets.ModelViewSet):
     queryset = Exercice.objects.all()
     serializer_class = ExerciceSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly] # On garde ta permission plus souple
+    permission_classes = [IsAuthenticatedOrReadOnly]
     filterset_fields = ['categorie']
 
 class ProgrammeViewSet(viewsets.ModelViewSet):
@@ -103,6 +109,66 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
             serializer.save(coach=self.request.user.coach_profile)
         else:
             raise PermissionDenied("Seuls les coachs peuvent créer un programme.")
+
+
+# --- VUE POUR LE CRÉATEUR DE SÉANCE (Issue #10) ---
+
+class SeanceViewSet(viewsets.ModelViewSet):
+    """ ViewSet pour gérer la création de séances complexes avec exercices imbriqués """
+    serializer_class = SeanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if hasattr(user, 'coach_profile'):
+            return Seance.objects.filter(programme__coach=user.coach_profile)
+        elif hasattr(user, 'client_profile'):
+            return Seance.objects.filter(programme__athlete=user.client_profile)
+        return Seance.objects.none()
+
+    @transaction.atomic # Garantie que si un exercice plante, la séance n'est pas sauvegardée à moitié
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        programme_id = data.get('programme_id')
+        titre = data.get('titre')
+        exercices_data = data.get('exercices', [])
+
+        if not programme_id or not titre:
+            return Response({"error": "Le programme_id et le titre sont requis."}, status=status.HTTP_400_BAD_REQUEST)
+
+        programme = get_object_or_404(Programme, id=programme_id)
+
+        # Sécurité : vérifier que le coach est le propriétaire
+        if not hasattr(request.user, 'coach_profile') or programme.coach != request.user.coach_profile:
+            raise PermissionDenied("Vous n'êtes pas autorisé à ajouter une séance à ce programme.")
+
+        # Calcul automatique de l'ordre (Jour 1, Jour 2...)
+        ordre_seance = Seance.objects.filter(programme=programme).count() + 1
+
+        seance = Seance.objects.create(
+            programme=programme,
+            titre=titre,
+            ordre=ordre_seance
+        )
+
+        # Création des exercices liés
+        for exo_data in exercices_data:
+            exercice = get_object_or_404(Exercice, id=exo_data.get('exercice_id'))
+            SeanceExercice.objects.create(
+                seance=seance,
+                exercice=exercice,
+                series=exo_data.get('series', 3),
+                repetitions=exo_data.get('repetitions', '10'),
+                poids=exo_data.get('poids', 'Poids du corps'),
+                repos=exo_data.get('repos', '60s'),
+                ordre=exo_data.get('ordre', 1)
+            )
+
+        serializer = self.get_serializer(seance)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# --- VUES ANALYTICS ET DASHBOARD ---
 
 class AthleteDashboardView(APIView):
     """ Renvoie toutes les infos condensées pour la page d'accueil de l'athlète """
@@ -143,6 +209,7 @@ class AthleteDashboardView(APIView):
             }
         }
         return Response(data)
+
     
 class CoachAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -160,7 +227,6 @@ class CoachAnalyticsView(APIView):
         total_athletes = coach.clients.count()
 
         # 3. Calcul du taux de complétion sur les 7 derniers jours
-        # On récupère toutes les séances des programmes créés par ce coach
         seances_7_jours = Seance.objects.filter(
             programme__coach=coach,
             jour_prevu__range=[seven_days_ago, today]
@@ -172,20 +238,21 @@ class CoachAnalyticsView(APIView):
         completion_rate = 0
         if total_seances > 0:
             completion_rate = round((seances_completees / total_seances) * 100, 1)
+        
         # 5. Calcul du volume total (Estimation : 450 calories par séance complétée)
         total_volume = seances_completees * 450
+        
         # 4. Données historiques pour le graphique (7 derniers jours)
         chart_data = []
         for i in range(7):
             date_target = seven_days_ago + timedelta(days=i)
-            # On compte les séances complétées pour ce jour précis
             count_day = seances_7_jours.filter(
                 jour_prevu=date_target, 
                 est_completee=True
             ).count()
             
             chart_data.append({
-                "day": date_target.strftime('%a'), # Ex: "Mon", "Tue"...
+                "day": date_target.strftime('%a'),
                 "sessions": count_day
             })
 

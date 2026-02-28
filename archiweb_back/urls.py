@@ -3,10 +3,11 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-# On importe toutes les vues (les tiennes + les leurs)
+# On importe toutes les vues combinées (les tiennes + celles de l'issue)
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
-    ExerciceViewSet, ProgrammeViewSet, AthleteDashboardView, DemoStatsView,CoachAnalyticsView
+    ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, 
+    AthleteDashboardView, DemoStatsView, CoachAnalyticsView
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -19,6 +20,7 @@ router = DefaultRouter()
 router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'exercices', ExerciceViewSet, basename='exercice')
 router.register(r'programmes', ProgrammeViewSet, basename='programme')
+router.register(r'seances', SeanceViewSet, basename='seance')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -33,10 +35,11 @@ urlpatterns = [
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
     
-    # Ta vue Démo (On la garde !)
+    # --- Tes vues (Démo & Analytics) ---
     path('api/demo/stats/', DemoStatsView.as_view(), name='demo-stats'),
+    path('api/coach/analytics/', CoachAnalyticsView.as_view(), name='coach-analytics'),
 
-    # Dashboard Athlète (Nouveau travail des collègues)
+    # --- Dashboard Athlète ---
     path('api/athlete/dashboard-stats/', AthleteDashboardView.as_view(), name='athlete-dashboard-stats'),
 
     # ROUTES SUPER-ADMIN (Isolées)
@@ -46,5 +49,4 @@ urlpatterns = [
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 
     path('api-auth/', include('rest_framework.urls')),
-    path('api/coach/analytics/', CoachAnalyticsView.as_view(), name='coach-analytics'),
 ]

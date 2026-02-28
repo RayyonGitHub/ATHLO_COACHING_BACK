@@ -29,11 +29,16 @@ class SeanceExerciceSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class SeanceSerializer(serializers.ModelSerializer):
-    # On imbrique les exercices dans la séance
     exercices_details = SeanceExerciceSerializer(many=True, read_only=True)
+    volume_total = serializers.ReadOnlyField() # On expose le calcul automatique
+
     class Meta:
         model = Seance
-        fields = '__all__'
+        fields = [
+            'id', 'programme', 'titre', 'ordre', 'jour_prevu', 
+            'est_completee', 'commentaire_coach', 'ressenti_client', 
+            'notes_client', 'exercices_details', 'volume_total'
+        ]
 
 class ProgrammeSerializer(serializers.ModelSerializer):
     # On imbrique les séances dans le programme
