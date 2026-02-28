@@ -3,9 +3,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from django.shortcuts import get_object_or_404
+from django.db import transaction
 
-from .models import Client, Coach, Exercice, Programme, Seance
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer
 
 # --- Vues Existantes ---
 
@@ -87,6 +89,63 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
         else:
             raise PermissionDenied("Seuls les coachs peuvent créer un programme.")
 
+# --- VUE POUR LE CRÉATEUR DE SÉANCE (Issue #10) ---
+
+class SeanceViewSet(viewsets.ModelViewSet):
+    """ ViewSet pour gérer la création de séances complexes avec exercices imbriqués """
+    serializer_class = SeanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if hasattr(user, 'coach_profile'):
+            return Seance.objects.filter(programme__coach=user.coach_profile)
+        elif hasattr(user, 'client_profile'):
+            return Seance.objects.filter(programme__athlete=user.client_profile)
+        return Seance.objects.none()
+
+    @transaction.atomic # Garantie que si un exercice plante, la séance n'est pas sauvegardée à moitié
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        programme_id = data.get('programme_id')
+        titre = data.get('titre')
+        exercices_data = data.get('exercices', [])
+
+        if not programme_id or not titre:
+            return Response({"error": "Le programme_id et le titre sont requis."}, status=status.HTTP_400_BAD_REQUEST)
+
+        programme = get_object_or_404(Programme, id=programme_id)
+
+        # Sécurité : vérifier que le coach est le propriétaire
+        if not hasattr(request.user, 'coach_profile') or programme.coach != request.user.coach_profile:
+            raise PermissionDenied("Vous n'êtes pas autorisé à ajouter une séance à ce programme.")
+
+        # Calcul automatique de l'ordre (Jour 1, Jour 2...)
+        ordre_seance = Seance.objects.filter(programme=programme).count() + 1
+
+        seance = Seance.objects.create(
+            programme=programme,
+            titre=titre,
+            ordre=ordre_seance
+        )
+
+        # Création des exercices liés
+        for exo_data in exercices_data:
+            exercice = get_object_or_404(Exercice, id=exo_data.get('exercice_id'))
+            SeanceExercice.objects.create(
+                seance=seance,
+                exercice=exercice,
+                series=exo_data.get('series', 3),
+                repetitions=exo_data.get('repetitions', '10'),
+                poids=exo_data.get('poids', 'Poids du corps'),
+                repos=exo_data.get('repos', '60s'),
+                ordre=exo_data.get('ordre', 1)
+            )
+
+        serializer = self.get_serializer(seance)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 # --- VUE SPÉCIALE DASHBOARD FRONT-END ---
 
 class AthleteDashboardView(APIView):
@@ -108,7 +167,6 @@ class AthleteDashboardView(APIView):
 
         seance_data = None
         if prochaine_seance:
-            # On calcule des stats fictives basées sur le nombre d'exercices
             nb_exos = prochaine_seance.exercices_details.count()
             seance_data = {
                 "id": prochaine_seance.id,
