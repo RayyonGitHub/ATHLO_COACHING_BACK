@@ -306,3 +306,57 @@ class PerformanceCreateView(generics.CreateAPIView):
             serializer.save(client=self.request.user.client_profile)
         else:
             raise PermissionDenied("Seul un athlète peut enregistrer une performance.")
+
+class CoachCalendarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'coach_profile'):
+            return Response({"error": "Réservé aux coachs"}, status=403)
+            
+        coach = request.user.coach_profile
+        # Optimisation : on précharge les inscriptions et les clients pour éviter les requêtes N+1
+        seances = Seance.objects.filter(
+            programme__coach=coach
+        ).prefetch_related('inscriptions__client')
+        
+        data = []
+        for s in seances:
+            inscriptions = s.inscriptions.all()
+            nb_inscrits = inscriptions.count()
+
+            # CAS 1 : Séance Collective (Groupe)
+            if s.est_collective:
+                noms_liste = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions]
+                client_display = ", ".join(noms_liste) if noms_liste else "Aucun inscrit"
+                capacity_info = f"{nb_inscrits}/{s.capacite_max}"
+            
+            # CAS 2 : Séance Individuelle
+            else:
+                athlete = s.programme.athlete if s.programme else None
+                
+                if athlete:
+                    # Cas classique : l'athlète est déjà assigné au programme
+                    client_display = f"{athlete.prenom} {athlete.nom.upper()}"
+                    capacity_info = "1/1"
+                elif nb_inscrits > 0:
+                    # Cas où on a utilisé la table Inscription pour une séance individuelle
+                    first_ins = inscriptions.first()
+                    client_display = f"{first_ins.client.prenom} {first_ins.client.nom.upper()}"
+                    capacity_info = "1/1"
+                else:
+                    # Cas "ana ana" : pas d'athlète sur le programme et pas d'inscription
+                    client_display = "En attente d'athlète"
+                    capacity_info = "0/1"
+
+            data.append({
+                "id": s.id,
+                "title": s.titre,
+                "start": f"{s.jour_prevu}T{s.heure_debut}" if s.heure_debut else str(s.jour_prevu),
+                "is_collective": s.est_collective,
+                "capacity_label": capacity_info,
+                "client_name": client_display,
+                "completed": s.est_completee
+            })
+        
+        return Response(data)
