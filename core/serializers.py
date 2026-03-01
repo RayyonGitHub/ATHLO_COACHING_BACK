@@ -63,3 +63,23 @@ class PerformanceSerializer(serializers.ModelSerializer):
             'date_enregistrement'
         ]
         read_only_fields = ['id', 'date_enregistrement']
+
+class CoachCalendarSerializer(serializers.ModelSerializer):
+    client_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Seance
+        fields = ['id', 'title', 'start', 'is_collective', 'capacite_max', 'client_name']
+
+    def get_client_name(self, obj):
+        try:
+            # On remonte du programme vers l'athlète/client, puis vers l'User Django
+            user = obj.programme.athlete.user 
+            
+            # On récupère les deux et on nettoie les espaces
+            full_name = f"{user.first_name} {user.last_name}".strip()
+            
+            # Si le full_name est vide (champs non remplis), on renvoie le username
+            return full_name if full_name else user.username
+        except AttributeError:
+            return "Client Inconnu"
