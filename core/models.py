@@ -90,6 +90,10 @@ class Seance(models.Model):
     
     ordre = models.PositiveIntegerField(default=1, help_text="Jour 1, Jour 2, etc.")
     jour_prevu = models.DateField(null=True, blank=True, help_text="Date exacte si planifié dans le calendrier")
+    heure_debut = models.TimeField(null=True, blank=True, help_text="Heure de la séance") 
+    est_collective = models.BooleanField(default=False, verbose_name="Séance de groupe") 
+    capacite_max = models.PositiveIntegerField(default=1, help_text="Nombre max de participants") 
+    
     est_completee = models.BooleanField(default=False)
     
     commentaire_coach = models.TextField(blank=True, help_text="Notes du coach après la séance")
@@ -97,10 +101,10 @@ class Seance(models.Model):
     notes_client = models.TextField(blank=True, help_text="Commentaires de l'athlète")
 
     class Meta:
-        ordering = ['ordre', 'jour_prevu']
-
+            ordering = ['jour_prevu', 'heure_debut', 'ordre']
     def __str__(self):
-        return f"Jour {self.ordre}: {self.titre} ({self.programme.titre})"
+        type_s = "Collectif" if self.est_collective else "Individuel"
+        return f"{self.jour_prevu} {self.heure_debut} - {self.titre} ({type_s})"
 
     def calculer_volume_total(self):
         """ Calcule le tonnage total soulevé durant la séance """
@@ -156,3 +160,31 @@ class Performance(models.Model):
 
     def __str__(self):
         return f"Perf de {self.client.prenom} - {self.seance_exercice.exercice.nom}"
+    
+class Inscription(models.Model):
+    seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='inscriptions')
+    client = models.ForeignKey('Client', on_delete=models.CASCADE)
+    date_inscription = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('seance', 'client')
+
+    def clean(self):
+        # 1. Vérifier si c'est une séance collective
+        if not self.seance.est_collective:
+            raise ValidationError("Impossible d'ajouter plusieurs inscrits à une séance individuelle.")
+
+        # 2. Vérifier la capacité (uniquement lors de la création d'une nouvelle inscription)
+        if not self.pk:  # Si l'objet n'existe pas encore (nouvel ajout)
+            nb_inscrits = self.seance.inscriptions.count()
+            if nb_inscrits >= self.seance.capacite_max:
+                raise ValidationError(
+                    f"La capacité maximale ({self.seance.capacite_max}) de cette séance est atteinte."
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.client.prenom} {self.client.nom} inscrit à {self.seance.titre}"
