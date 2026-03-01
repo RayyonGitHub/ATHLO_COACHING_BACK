@@ -9,7 +9,7 @@ from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, 
     AthleteDashboardView, DemoStatsView, CoachAnalyticsView,
-    PerformanceCreateView # <-- NOUVEAU ICI
+    PerformanceCreateView, CoachCalendarView 
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -52,6 +52,9 @@ urlpatterns = [
     path('api/admin/stats/', admin_stats_view, name='admin-stats'),
     path('api/admin/coachs/', admin_coach_list, name='admin-coach-list'),
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
+
+    #ROUTE pour calendrier coach
+    path('api/coach/calendar/', CoachCalendarView.as_view(), name='coach-calendar'),
 
     path('api-auth/', include('rest_framework.urls')),
 ]
