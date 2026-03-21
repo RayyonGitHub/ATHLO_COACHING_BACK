@@ -13,7 +13,7 @@ class ClientSerializer(serializers.ModelSerializer):
 class CoachSerializer(serializers.ModelSerializer):
     class Meta:
         model = Coach
-        fields = ['specialites_tags', 'offres_tarifs', 'telephone', 'specialite']
+        fields = ['specialites_tags', 'offres_tarifs', 'telephone', 'specialite', 'ville']
 
 # --- SERIALIZERS SPORTIFS ---
 
