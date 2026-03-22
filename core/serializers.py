@@ -1,6 +1,6 @@
 from rest_framework import serializers
 # Ajout de Performance dans les imports
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite
 
 # Serializer pour l'Annuaire
 class ClientSerializer(serializers.ModelSerializer):
@@ -13,8 +13,7 @@ class ClientSerializer(serializers.ModelSerializer):
 class CoachSerializer(serializers.ModelSerializer):
     class Meta:
         model = Coach
-        fields = ['specialites_tags', 'offres_tarifs', 'telephone', 'specialite']
-
+        fields = ['id', 'specialites_tags', 'offres_tarifs', 'telephone', 'specialite']
 # --- SERIALIZERS SPORTIFS ---
 
 class ExerciceSerializer(serializers.ModelSerializer):
@@ -36,10 +35,12 @@ class SeanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Seance
         fields = [
-            'id', 'programme', 'titre', 'ordre', 'jour_prevu', 
+            'id', 'coach', 'programme', 'titre', 'ordre', 'jour_prevu', 
+            'heure_debut', 'heure_fin', 'est_collective', 'capacite_max',
             'est_completee', 'commentaire_coach', 'ressenti_client', 
             'notes_client', 'exercices_details', 'volume_total'
         ]
+        read_only_fields = ['coach'] # Sécurité : le coach est déduit automatiquement
 
 class ProgrammeSerializer(serializers.ModelSerializer):
     # On imbrique les séances dans le programme
@@ -64,22 +65,8 @@ class PerformanceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'date_enregistrement']
 
-class CoachCalendarSerializer(serializers.ModelSerializer):
-    client_name = serializers.SerializerMethodField()
-
+class IndisponibiliteSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Seance
-        fields = ['id', 'title', 'start', 'is_collective', 'capacite_max', 'client_name']
-
-    def get_client_name(self, obj):
-        try:
-            # On remonte du programme vers l'athlète/client, puis vers l'User Django
-            user = obj.programme.athlete.user 
-            
-            # On récupère les deux et on nettoie les espaces
-            full_name = f"{user.first_name} {user.last_name}".strip()
-            
-            # Si le full_name est vide (champs non remplis), on renvoie le username
-            return full_name if full_name else user.username
-        except AttributeError:
-            return "Client Inconnu"
+        model = Indisponibilite
+        fields = '__all__'
+        read_only_fields = ['coach']

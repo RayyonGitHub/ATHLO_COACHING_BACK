@@ -85,26 +85,48 @@ class Programme(models.Model):
         return f"{self.titre} (Coach: {self.coach.user.username} -> Athlète: {nom_athlete})"
 
 class Seance(models.Model):
-    programme = models.ForeignKey(Programme, on_delete=models.CASCADE, related_name='seances')
+    # 1. Lien direct avec le coach (obligatoire pour filtrer le calendrier du coach)
+    coach = models.ForeignKey('Coach', on_delete=models.CASCADE, related_name='seances_creees')
+    
+    # 2. Le programme devient optionnel (pour les cours collectifs ou RDV ponctuels)
+    programme = models.ForeignKey('Programme', on_delete=models.CASCADE, related_name='seances', null=True, blank=True)
+    
     titre = models.CharField(max_length=150, verbose_name="Titre de la séance (ex: Haut du corps)")
     
-    ordre = models.PositiveIntegerField(default=1, help_text="Jour 1, Jour 2, etc.")
+    # --- INFOS CALENDRIER ---
     jour_prevu = models.DateField(null=True, blank=True, help_text="Date exacte si planifié dans le calendrier")
-    heure_debut = models.TimeField(null=True, blank=True, help_text="Heure de la séance") 
+    heure_debut = models.TimeField(null=True, blank=True, help_text="Heure de début") 
+    heure_fin = models.TimeField(null=True, blank=True, help_text="Heure de fin") 
+    
+    ordre = models.PositiveIntegerField(default=1, help_text="Jour 1, Jour 2, etc. (utile si dans un programme)")
+    
+    # --- PARAMÈTRES DE RÉSERVATION ---
     est_collective = models.BooleanField(default=False, verbose_name="Séance de groupe") 
     capacite_max = models.PositiveIntegerField(default=1, help_text="Nombre max de participants") 
     
+    # --- SUIVI ---
     est_completee = models.BooleanField(default=False)
-    
     commentaire_coach = models.TextField(blank=True, help_text="Notes du coach après la séance")
     ressenti_client = models.PositiveIntegerField(null=True, blank=True, help_text="Note de difficulté de 1 à 10 laissée par l'athlète")
     notes_client = models.TextField(blank=True, help_text="Commentaires de l'athlète")
 
     class Meta:
-            ordering = ['jour_prevu', 'heure_debut', 'ordre']
+        ordering = ['jour_prevu', 'heure_debut', 'ordre']
+
+    def clean(self):
+        # Vérification pour l'affichage correct dans le calendrier
+        if self.heure_debut and self.heure_fin:
+            if self.heure_fin <= self.heure_debut:
+                raise ValidationError("L'heure de fin doit être après l'heure de début.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         type_s = "Collectif" if self.est_collective else "Individuel"
-        return f"{self.jour_prevu} {self.heure_debut} - {self.titre} ({type_s})"
+        date_str = f"{self.jour_prevu} de {self.heure_debut} à {self.heure_fin}" if self.jour_prevu and self.heure_debut else f"Ordre: {self.ordre}"
+        return f"{date_str} - {self.titre} ({type_s})"
 
     def calculer_volume_total(self):
         """ Calcule le tonnage total soulevé durant la séance """
@@ -162,29 +184,69 @@ class Performance(models.Model):
         return f"Perf de {self.client.prenom} - {self.seance_exercice.exercice.nom}"
     
 class Inscription(models.Model):
+    STATUT_CHOICES = [
+        ('CONFIRME', 'Confirmé'),
+        ('ATTENTE', 'En liste d\'attente'),
+        ('ANNULE', 'Annulé'),
+    ]
+    
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='inscriptions')
     client = models.ForeignKey('Client', on_delete=models.CASCADE)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='CONFIRME')
     date_inscription = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ('seance', 'client')
 
     def clean(self):
-        # 1. Vérifier si c'est une séance collective
-        if not self.seance.est_collective:
-            raise ValidationError("Impossible d'ajouter plusieurs inscrits à une séance individuelle.")
+        # On ne vérifie la capacité que si l'on essaie de CONFIRMER une inscription
+        if self.statut == 'CONFIRME':
+            
+            # On compte combien d'inscrits sont DÉJÀ confirmés.
+            # Le .exclude(pk=self.pk) est crucial : il évite de se compter soi-même 
+            # si on est en train de modifier une inscription existante.
+            inscrits_confirmes = self.seance.inscriptions.filter(statut='CONFIRME').exclude(pk=self.pk).count()
 
-        # 2. Vérifier la capacité (uniquement lors de la création d'une nouvelle inscription)
-        if not self.pk:  # Si l'objet n'existe pas encore (nouvel ajout)
-            nb_inscrits = self.seance.inscriptions.count()
-            if nb_inscrits >= self.seance.capacite_max:
-                raise ValidationError(
-                    f"La capacité maximale ({self.seance.capacite_max}) de cette séance est atteinte."
-                )
+            # 1. Règle pour séance individuelle (capacité forcée à 1)
+            if not self.seance.est_collective:
+                if inscrits_confirmes >= 1:
+                    raise ValidationError("Cette séance individuelle est déjà réservée.")
+
+            # 2. Règle pour séance collective (selon capacite_max)
+            else:
+                if inscrits_confirmes >= self.seance.capacite_max:
+                    raise ValidationError(
+                        f"La capacité maximale ({self.seance.capacite_max}) est atteinte. "
+                        "L'inscription doit être mise en 'Liste d'attente'."
+                    )
 
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.client.prenom} {self.client.nom} inscrit à {self.seance.titre}"
+        return f"{self.client.prenom} {self.client.nom} - {self.seance.titre} ({self.get_statut_display()})"
+    
+class Indisponibilite(models.Model):
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='indisponibilites')
+    titre = models.CharField(max_length=100, default="Indisponible")
+    
+    # --- ON UTILISE LE MÊME FORMAT QUE LES SÉANCES ---
+    jour_prevu = models.DateField()
+    heure_debut = models.TimeField()
+    heure_fin = models.TimeField()
+    # ------------------------------------------------
+    
+    est_conge = models.BooleanField(default=False, help_text="Cochez si c'est un congé/vacances")
+
+    def clean(self):
+        # On vérifie juste que l'heure de fin est après l'heure de début
+        if self.heure_debut and self.heure_fin and self.heure_fin <= self.heure_debut:
+            raise ValidationError("L'heure de fin doit être strictement postérieure à l'heure de début.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.coach.user.username} - {self.titre} ({self.jour_prevu.strftime('%d/%m/%Y')})"
