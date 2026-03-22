@@ -645,7 +645,7 @@ def update_inscription_status(request, inscription_id):
         inscription.save()
         return Response({"message": f"Statut mis à jour en {nouveau_statut}", "statut": nouveau_statut}, status=200)
         
-return Response({"error": "Statut invalide"}, status=400)
+    return Response({"error": "Statut invalide"}, status=400)
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
