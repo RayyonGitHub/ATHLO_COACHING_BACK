@@ -441,12 +441,17 @@ class PerformanceCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        # On lie automatiquement la performance au client connecté
         if hasattr(self.request.user, 'client_profile'):
-            serializer.save(client=self.request.user.client_profile)
+            performance = serializer.save(client=self.request.user.client_profile)
+            
+            # --- NOUVEAU : On marque la séance parente comme complétée ---
+            seance_parent = performance.seance_exercice.seance
+            if not seance_parent.est_completee:
+                seance_parent.est_completee = True
+                seance_parent.save()
+            # -------------------------------------------------------------
         else:
             raise PermissionDenied("Seul un athlète peut enregistrer une performance.")
-
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
 
