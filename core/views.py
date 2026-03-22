@@ -10,7 +10,10 @@ from icalendar import Calendar, Event
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 
-from rest_framework import viewsets, status, generics 
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.response import Response
+from django.contrib.auth import authenticate
+from rest_framework import viewsets, status, generics
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
@@ -20,6 +23,10 @@ from rest_framework.exceptions import PermissionDenied
 from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer
 
+# partie création de client
+from rest_framework.exceptions import ValidationError
+from django.core.mail import send_mail
+from django.conf import settings
 
 # --- Vues Existantes ---
 
@@ -32,12 +39,91 @@ class ClientViewSet(viewsets.ModelViewSet):
             return Client.objects.filter(coach=self.request.user.coach_profile)
         return Client.objects.none()
 
+    def generate_password(self, length=10):
+        import random
+        import string
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
     def perform_create(self, serializer):
+        print(">>> perform_create appelé")  # debug
+
+        coach_profile = self.request.user.coach_profile
+
+        email = serializer.validated_data.get('email')
+
+        # vérification si le client existe deja alors lié le prospect  au client
+        existing_user = User.objects.filter(email=email).first()
+        existing_client = Client.objects.filter(email=email).first()
+
+        if existing_user and existing_client:
+            # Cas : prospect déjà inscrit → on le transforme en client
+            client = existing_client
+
+            client.coach = coach_profile
+            client.nom = serializer.validated_data.get('nom')
+            client.prenom = serializer.validated_data.get('prenom')
+
+            client.save()
+
+            print(f"Prospect transformé en client : {email}")
+
+            return  # IMPORTANT : on ne recrée pas de user
+
+        elif existing_user:
+            raise ValidationError("Un utilisateur avec cet email existe déjà.")
+
+        temp_password = self.generate_password()
+
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=temp_password,
+            first_name=serializer.validated_data.get('prenom'),
+            last_name=serializer.validated_data.get('nom')
+        )
+
+        serializer.save(
+            coach=coach_profile,
+            user=user
+        )
+
+        print(f"Compte créé pour {email} | Mot de passe temporaire : {temp_password}")
+        send_mail(
+            subject="Vos identifiants de connexion",
+            message=f"""
+        Bonjour {serializer.validated_data.get('prenom')},
+
+        Votre compte a été créé par votre coach.
+
+        Voici vos identifiants temporaires :
+
+        Email : {email}
+        Mot de passe : {temp_password}
+
+        Vous pourrez vous connecter ici :
+        http://localhost:5173/login
+
+        Merci.
+        """,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+
+    def destroy(self, request, *args, **kwargs):
         try:
-            coach_profile = self.request.user.coach_profile
-            serializer.save(coach=coach_profile)
-        except Coach.DoesNotExist:
-            raise PermissionDenied("Vous n'avez pas de profil Coach associé.")
+            instance = self.get_object()
+        except:
+            return Response({"detail": "Client introuvable."}, status=404)
+
+        # supprimer le user associé
+        if instance.user:
+            instance.user.delete()
+
+        instance.delete()
+
+        return Response(status=204)
+
 
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -195,10 +281,11 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
+      # 1. Trouver la prochaine séance non complétée (Individuelle OU Collective)
         prochaine_seance = Seance.objects.filter(
-            programme__athlete=client,
+            Q(programme__athlete=client) | Q(inscriptions__client=client), # NOUVEAU : On gère les 2 cas !
             est_completee=False
-        ).order_by('jour_prevu', 'ordre').first()
+        ).order_by('jour_prevu', 'heure_debut', 'ordre').first()
 
         seance_data = None
         if prochaine_seance:
@@ -211,13 +298,52 @@ class AthleteDashboardView(APIView):
                 "calories_estimees": nb_exos * 80 if nb_exos > 0 else 450,
             }
 
+        # --- DÉBUT DES VRAIS CALCULS (ISSUE #17) ---
+        
+        today = timezone.now().date()
+        
+        # Récupérer toutes les performances du jour
+        performances_du_jour = Performance.objects.filter(
+            client=client,
+            date_enregistrement__date=today
+        )
+
+        # Calcul des Calories brûlées
+        total_series_jour = sum(perf.series_realisees for perf in performances_du_jour)
+        calories_brulees = total_series_jour * 15
+
+        # Calcul de la Complétion du jour (%)
+        completion_jour = 0
+        seance_du_jour = Seance.objects.filter(programme__athlete=client, jour_prevu=today).first()
+        
+        if seance_du_jour:
+            total_exos_prevus = seance_du_jour.exercices_details.count()
+            exos_valides = performances_du_jour.values('seance_exercice').distinct().count()
+            
+            if total_exos_prevus > 0:
+                completion_jour = int((exos_valides / total_exos_prevus) * 100)
+                if exos_valides >= total_exos_prevus and not seance_du_jour.est_completee:
+                    seance_du_jour.est_completee = True
+                    seance_du_jour.save()
+
+        # 💡 NOUVEAU : Calcul Dynamique du BMR (Métabolisme) pour calories_max
+        calories_max_objectif = 2400  # Valeur par défaut si profil incomplet
+        
+        if client.poids and client.taille and client.age:
+            # Formule de Mifflin-St Jeor : (10 × Poids) + (6.25 × Taille) - (5 × Age) + 5
+            bmr = (10 * client.poids) + (6.25 * client.taille) - (5 * client.age) + 5
+            # On multiplie par 1.55 pour correspondre à une personne avec une activité sportive modérée
+            calories_max_objectif = int(bmr * 1.55)
+
+        # --- FIN DES CALCULS ---
+
         data = {
             "prenom": client.prenom or user.username,
             "prochaine_seance": seance_data,
             "stats_sante": {
-                "completion_jour": 75,
-                "calories": 1840,
-                "calories_max": 2400,
+                "completion_jour": completion_jour,
+                "calories": calories_brulees,
+                "calories_max": calories_max_objectif, # Vraie donnée basée sur le profil !
                 "recuperation": 94,
             }
         }
@@ -519,4 +645,36 @@ def update_inscription_status(request, inscription_id):
         inscription.save()
         return Response({"message": f"Statut mis à jour en {nouveau_statut}", "statut": nouveau_statut}, status=200)
         
-    return Response({"error": "Statut invalide"}, status=400)
+return Response({"error": "Statut invalide"}, status=400)
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        user = authenticate(username=email, password=password)
+
+        if user is None:
+            return Response({"error": "Invalid credentials"}, status=401)
+
+        refresh = RefreshToken.for_user(user)
+
+        # DÉTECTION DU ROLE
+        if hasattr(user, 'coach_profile'):
+            role = 'coach'
+        elif hasattr(user, 'client_profile'):
+            role = 'athlete'
+        else:
+            role = 'prospect'
+
+        return Response({
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": role
+            }
+        })
