@@ -4,16 +4,21 @@ from django.db.models import Count, Q
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+import datetime
+from django.http import HttpResponse
+from icalendar import Calendar, Event
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 
-from rest_framework import viewsets, status, generics # Ajout de generics ici
+from rest_framework import viewsets, status, generics 
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
 from rest_framework.exceptions import PermissionDenied
 
 # Ajout de Performance et PerformanceSerializer
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer
 
 
 # --- Vues Existantes ---
@@ -121,7 +126,10 @@ class SeanceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if hasattr(user, 'coach_profile'):
-            return Seance.objects.filter(programme__coach=user.coach_profile)
+            # On autorise les séances liées directement au coach OU via un programme
+            return Seance.objects.filter(
+                Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)
+            ).distinct()
         elif hasattr(user, 'client_profile'):
             return Seance.objects.filter(programme__athlete=user.client_profile)
         return Seance.objects.none()
@@ -130,11 +138,20 @@ class SeanceViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data
         programme_id = data.get('programme_id')
+
+        # --- CAS 1 : Création directe depuis l'Agenda (sans programme) ---
+        if not programme_id:
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(coach=request.user.coach_profile)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        # --- CAS 2 : Création depuis le créateur de Programme (Ton ancien code) ---
         titre = data.get('titre')
         exercices_data = data.get('exercices', [])
 
-        if not programme_id or not titre:
-            return Response({"error": "Le programme_id et le titre sont requis."}, status=status.HTTP_400_BAD_REQUEST)
+        if not titre:
+            return Response({"error": "Le titre est requis."}, status=status.HTTP_400_BAD_REQUEST)
 
         programme = get_object_or_404(Programme, id=programme_id)
 
@@ -144,6 +161,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
         ordre_seance = Seance.objects.filter(programme=programme).count() + 1
 
         seance = Seance.objects.create(
+            coach=request.user.coach_profile, # Ajouté ici par sécurité
             programme=programme,
             titre=titre,
             ordre=ordre_seance
@@ -270,19 +288,17 @@ class PerformanceCreateView(generics.CreateAPIView):
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        if not hasattr(request.user, 'coach_profile'):
-            return Response({"error": "Réservé aux coachs"}, status=403)
-            
-        coach = request.user.coach_profile
-        # Optimisation : on précharge les inscriptions et les clients pour éviter les requêtes N+1
+    def get(self, request, coach_id):
+        coach = get_object_or_404(Coach, id=coach_id)
+        
+        # 1. Traitement des Séances
         seances = Seance.objects.filter(
-            programme__coach=coach
+            coach=coach
         ).prefetch_related('inscriptions__client')
         
         data = []
         for s in seances:
-            inscriptions = s.inscriptions.all()
+            inscriptions = s.inscriptions.filter(statut='CONFIRME')
             nb_inscrits = inscriptions.count()
 
             # CAS 1 : Séance Collective (Groupe)
@@ -310,13 +326,101 @@ class CoachCalendarView(APIView):
                     capacity_info = "0/1"
 
             data.append({
-                "id": s.id,
+                "id": f"seance_{s.id}",       # ID unique pour React
+                "db_id": s.id,                # ID en DB si besoin d'éditer
                 "title": s.titre,
                 "start": f"{s.jour_prevu}T{s.heure_debut}" if s.heure_debut else str(s.jour_prevu),
+                "end": f"{s.jour_prevu}T{s.heure_fin}" if s.heure_fin else None,
                 "is_collective": s.est_collective,
+                "type": "collective" if s.est_collective else "individuelle",
                 "capacity_label": capacity_info,
                 "client_name": client_display,
                 "completed": s.est_completee
             })
+            
+        # 2. Traitement des Indisponibilités
+        indispos = Indisponibilite.objects.filter(coach=coach)
+        for ind in indispos:
+            data.append({
+                "id": f"indispo_{ind.id}",
+                "db_id": ind.id,
+                "title": ind.titre,
+                # 👇 LES DEUX LIGNES QUI CHANGENT 👇
+                "start": f"{ind.jour_prevu}T{ind.heure_debut}",
+                "end": f"{ind.jour_prevu}T{ind.heure_fin}",
+                # 👆 ---------------------------- 👆
+                "is_collective": False,
+                "type": "conge" if ind.est_conge else "indisponibilite",
+                "capacity_label": "",
+                "client_name": "",
+                "completed": False
+            })
         
         return Response(data)
+    
+class IndisponibiliteViewSet(viewsets.ModelViewSet):
+    serializer_class = IndisponibiliteSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Un coach ne voit/gère que ses propres indisponibilités
+        if hasattr(self.request.user, 'coach_profile'):
+            return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
+        return Indisponibilite.objects.none()
+
+    def perform_create(self, serializer):
+        # On assigne automatiquement le coach connecté
+        if hasattr(self.request.user, 'coach_profile'):
+            serializer.save(coach=self.request.user.coach_profile)
+        else:
+            raise PermissionDenied("Seuls les coachs peuvent créer des indisponibilités.")
+        
+
+@api_view(['GET'])
+@permission_classes([AllowAny]) # Google Calendar n'a pas de token de connexion, il faut que l'URL soit lisible
+def export_coach_calendar(request, coach_id):
+    coach = get_object_or_404(Coach, id=coach_id)
+    cal = Calendar()
+    
+    # Méta-données du calendrier
+    cal.add('prodid', '-//Agenda Athlo Coach//athlo.com//')
+    cal.add('version', '2.0')
+    cal.add('calscale', 'GREGORIAN')
+    cal.add('x-wr-calname', f'Agenda Athlo - {coach.user.first_name}') # Nom du calendrier dans Google
+
+    # 1. On injecte toutes les Séances
+    seances = Seance.objects.filter(coach=coach)
+    for seance in seances:
+        event = Event()
+        event.add('summary', seance.titre if seance.titre else 'Séance de coaching')
+        
+        # On fusionne le jour et l'heure pour créer un vrai DateTime
+        dt_start = datetime.datetime.combine(seance.jour_prevu, seance.heure_debut)
+        dt_end = datetime.datetime.combine(seance.jour_prevu, seance.heure_fin)
+        
+        event.add('dtstart', dt_start)
+        event.add('dtend', dt_end)
+        event.add('description', 'Séance Collective' if seance.est_collective else 'Séance Individuelle')
+        
+        cal.add_component(event)
+
+    # 2. On injecte toutes les Indisponibilités
+    indispos = Indisponibilite.objects.filter(coach=coach)
+    for indispo in indispos:
+        event = Event()
+        event.add('summary', indispo.titre if indispo.titre else 'Indisponible')
+        
+        dt_start = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_debut)
+        dt_end = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_fin)
+        
+        event.add('dtstart', dt_start)
+        event.add('dtend', dt_end)
+        event.add('description', 'Congé' if indispo.est_conge else 'Indisponibilité')
+        
+        cal.add_component(event)
+
+    # On renvoie le tout sous forme de fichier téléchargeable (.ics)
+    response = HttpResponse(cal.to_ical(), content_type="text/calendar")
+    response['Content-Disposition'] = f'attachment; filename="athlo_agenda_{coach_id}.ics"'
+    
+    return response
