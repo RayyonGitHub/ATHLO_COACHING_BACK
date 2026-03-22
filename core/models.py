@@ -22,11 +22,13 @@ class Coach(models.Model):
     
     specialite = models.CharField(max_length=100, blank=True) 
 
+    ville = models.CharField(max_length=100, blank=True)
+
     def __str__(self):
         return f"{self.user.username} - Coach"
 
 class Client(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='client_profile', null=True, blank=True)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='client_profile')
     onboarding_data = models.JSONField(default=dict, blank=True)
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients', null=True, blank=True)
     
@@ -188,3 +190,20 @@ class Inscription(models.Model):
 
     def __str__(self):
         return f"{self.client.prenom} {self.client.nom} inscrit à {self.seance.titre}"
+    
+class Salle(models.Model):
+    nom = models.CharField(max_length=150)
+    adresse = models.CharField(max_length=255)
+    ville = models.CharField(max_length=100)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+
+    def __str__(self):
+        return self.nom
+
+class Avis(models.Model):
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='avis')
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
+    note = models.IntegerField()
+    commentaire = models.TextField(blank=True)
+    date = models.DateTimeField(auto_now_add=True)
