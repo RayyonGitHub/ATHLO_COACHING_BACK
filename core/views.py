@@ -177,11 +177,11 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
-        # 1. Trouver la prochaine séance non complétée
+      # 1. Trouver la prochaine séance non complétée (Individuelle OU Collective)
         prochaine_seance = Seance.objects.filter(
-            programme__athlete=client,
+            Q(programme__athlete=client) | Q(inscriptions__client=client), # NOUVEAU : On gère les 2 cas !
             est_completee=False
-        ).order_by('jour_prevu', 'ordre').first()
+        ).order_by('jour_prevu', 'heure_debut', 'ordre').first()
 
         seance_data = None
         if prochaine_seance:
