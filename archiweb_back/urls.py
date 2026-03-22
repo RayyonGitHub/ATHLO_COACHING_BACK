@@ -16,7 +16,7 @@ from core.views_admin import (
     admin_login_view, admin_coach_list, 
     admin_stats_view, admin_toggle_coach_status
 )
-from core.views import export_coach_calendar
+from core.views import export_coach_calendar,remove_participant,update_inscription_status
 
 # Configuration du Router
 router = DefaultRouter()
@@ -59,4 +59,9 @@ urlpatterns = [
     path('api/calendar/coach/<int:coach_id>/', CoachCalendarView.as_view(), name='coach-calendar'),
     path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
+
+    #ROUTE pour supprimer un partcipant d'une séance
+    path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
+    #ROUTE pour valider d'une séance
+    path('api/inscriptions/<int:inscription_id>/status/', update_inscription_status, name='update-inscription-status'),
 ]

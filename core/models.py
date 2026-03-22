@@ -188,6 +188,10 @@ class Inscription(models.Model):
         ('CONFIRME', 'Confirmé'),
         ('ATTENTE', 'En liste d\'attente'),
         ('ANNULE', 'Annulé'),
+        ('PRESENT', 'Présent'),
+        ('ABSENT', 'Absent')
+
+
     ]
     
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='inscriptions')
