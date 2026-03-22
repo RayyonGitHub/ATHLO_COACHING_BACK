@@ -10,4 +10,7 @@ admin.site.register(Exercice)
 admin.site.register(Programme)
 admin.site.register(Seance)
 admin.site.register(SeanceExercice)
-admin.site.register(Inscription)
+@admin.register(Inscription)
+class InscriptionAdmin(admin.ModelAdmin):
+    list_display = ('client', 'seance', 'statut', 'date_inscription')
+    list_filter = ('statut', 'seance__jour_prevu')
