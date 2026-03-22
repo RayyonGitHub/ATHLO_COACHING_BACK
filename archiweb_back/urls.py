@@ -9,13 +9,14 @@ from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, 
     AthleteDashboardView, DemoStatsView, CoachAnalyticsView,
-    PerformanceCreateView, CoachCalendarView 
+    PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
     admin_login_view, admin_coach_list, 
     admin_stats_view, admin_toggle_coach_status
 )
+from core.views import export_coach_calendar,remove_participant,update_inscription_status
 
 # Configuration du Router
 router = DefaultRouter()
@@ -23,6 +24,7 @@ router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'exercices', ExerciceViewSet, basename='exercice')
 router.register(r'programmes', ProgrammeViewSet, basename='programme')
 router.register(r'seances', SeanceViewSet, basename='seance')
+router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -54,7 +56,12 @@ urlpatterns = [
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 
     #ROUTE pour calendrier coach
-    path('api/coach/calendar/', CoachCalendarView.as_view(), name='coach-calendar'),
-
+    path('api/calendar/coach/<int:coach_id>/', CoachCalendarView.as_view(), name='coach-calendar'),
+    path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
+
+    #ROUTE pour supprimer un partcipant d'une séance
+    path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
+    #ROUTE pour valider d'une séance
+    path('api/inscriptions/<int:inscription_id>/status/', update_inscription_status, name='update-inscription-status'),
 ]
