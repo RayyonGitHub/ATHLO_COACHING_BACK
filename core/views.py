@@ -8,6 +8,9 @@ from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.http import HttpResponse
+from icalendar import Calendar, Event
+from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.permissions import AllowAny
 from django.conf import settings
 from django.core.mail import send_mail
 
@@ -21,9 +24,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from icalendar import Calendar, Event
 
-# Import de tes modèles et serializers
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription, Notification
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer, NotificationSerializer
 
 # --- Vues Profils ---
 
@@ -333,5 +335,52 @@ def export_coach_calendar(request, coach_id):
 
 class DemoStatsView(APIView):
     permission_classes = [AllowAny]
+def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        user = authenticate(username=email, password=password)
+
+        if user is None:
+            return Response({"error": "Invalid credentials"}, status=401)
+
+        refresh = RefreshToken.for_user(user)
+
+        # DÉTECTION DU ROLE
+        if hasattr(user, 'coach_profile'):
+            role = 'coach'
+        elif hasattr(user, 'client_profile'):
+            role = 'athlete'
+        else:
+            role = 'prospect'
+
+        return Response({
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": role
+            }
+        })
+
     def get(self, request):
         return Response({"total_exercices": Exercice.objects.count(), "total_coachs": Coach.objects.count()})
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Sécurité : Un coach ne voit QUE ses propres notifications
+        if hasattr(self.request.user, 'coach_profile'):
+            return Notification.objects.filter(coach=self.request.user.coach_profile)
+        return Notification.objects.none()
+
+    @action(detail=False, methods=['POST'])
+    def marquer_tout_lu(self, request):
+        # Cette fonction sera appelée quand le coach cliquera sur "Tout marquer comme lu"
+        notifications = self.get_queryset().filter(est_lu=False)
+        notifications.update(est_lu=True)
+        return Response({'status': 'Toutes les notifications ont été marquées comme lues', 'count': notifications.count()})
