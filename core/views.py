@@ -264,9 +264,9 @@ class AthleteDashboardView(APIView):
             
         client = user.client_profile
 
-      # 1. Trouver la prochaine séance non complétée (Individuelle OU Collective)
+        # 1. Trouver la prochaine séance non complétée
         prochaine_seance = Seance.objects.filter(
-            Q(programme__athlete=client) | Q(inscriptions__client=client), # NOUVEAU : On gère les 2 cas !
+            Q(programme__athlete=client) | Q(inscriptions__client=client),
             est_completee=False
         ).order_by('jour_prevu', 'heure_debut', 'ordre').first()
 
@@ -276,26 +276,39 @@ class AthleteDashboardView(APIView):
             seance_data = {
                 "id": prochaine_seance.id,
                 "titre": prochaine_seance.titre,
-                "programme_titre": prochaine_seance.programme.titre,
+                "programme_titre": prochaine_seance.programme.titre if prochaine_seance.programme else "Séance indépendante",
                 "duree_estimee": nb_exos * 10 if nb_exos > 0 else 45,
                 "calories_estimees": nb_exos * 80 if nb_exos > 0 else 450,
             }
 
-        # --- DÉBUT DES VRAIS CALCULS (ISSUE #17) ---
-        
+        # 2. Trouver le programme actuel de l'athlète (NOUVEAU)
+        programme_actuel = Programme.objects.filter(athlete=client).last()
+        programme_data = None
+        if programme_actuel:
+            total_seances = Seance.objects.filter(programme=programme_actuel).count()
+            seances_faites = Seance.objects.filter(programme=programme_actuel, est_completee=True).count()
+            
+            progression_globale = 0
+            if total_seances > 0:
+                progression_globale = int((seances_faites / total_seances) * 100)
+
+            programme_data = {
+                "titre": programme_actuel.titre,
+                "progression": progression_globale,
+                "semaine_actuelle": (seances_faites // 3) + 1 if total_seances > 0 else 1, # Simulation (3 séances/sem)
+                "semaine_totale": (total_seances // 3) or 1
+            }
+
+        # 3. Calculs des performances du jour
         today = timezone.now().date()
-        
-        # Récupérer toutes les performances du jour
         performances_du_jour = Performance.objects.filter(
             client=client,
             date_enregistrement__date=today
         )
 
-        # Calcul des Calories brûlées
         total_series_jour = sum(perf.series_realisees for perf in performances_du_jour)
         calories_brulees = total_series_jour * 15
 
-        # Calcul de la Complétion du jour (%)
         completion_jour = 0
         seance_du_jour = Seance.objects.filter(programme__athlete=client, jour_prevu=today).first()
         
@@ -309,29 +322,27 @@ class AthleteDashboardView(APIView):
                     seance_du_jour.est_completee = True
                     seance_du_jour.save()
 
-        # 💡 NOUVEAU : Calcul Dynamique du BMR (Métabolisme) pour calories_max
-        calories_max_objectif = 2400  # Valeur par défaut si profil incomplet
-        
+        # 4. Calcul du BMR
+        calories_max_objectif = 2400 
         if client.poids and client.taille and client.age:
-            # Formule de Mifflin-St Jeor : (10 × Poids) + (6.25 × Taille) - (5 × Age) + 5
             bmr = (10 * client.poids) + (6.25 * client.taille) - (5 * client.age) + 5
-            # On multiplie par 1.55 pour correspondre à une personne avec une activité sportive modérée
             calories_max_objectif = int(bmr * 1.55)
 
-        # --- FIN DES CALCULS ---
-
+        # 5. Assemblage final
         data = {
             "prenom": client.prenom or user.username,
             "prochaine_seance": seance_data,
+            "programme_actuel": programme_data, # <-- Injecté ici !
             "stats_sante": {
                 "completion_jour": completion_jour,
                 "calories": calories_brulees,
-                "calories_max": calories_max_objectif, # Vraie donnée basée sur le profil !
+                "calories_max": calories_max_objectif,
                 "recuperation": 94,
+                "pas": 8432,   # Mock pour le moment
+                "eau": 1.2     # Mock pour le moment
             }
         }
         return Response(data)
-
     
 class CoachAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
