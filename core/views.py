@@ -5,6 +5,10 @@ from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.response import Response
+from django.contrib.auth import authenticate
+
 from rest_framework import viewsets, status, generics # Ajout de generics ici
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
@@ -15,6 +19,10 @@ from rest_framework.exceptions import PermissionDenied
 from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer
 
+# partie création de client
+from rest_framework.exceptions import ValidationError
+from django.core.mail import send_mail
+from django.conf import settings
 
 # --- Vues Existantes ---
 
@@ -27,12 +35,91 @@ class ClientViewSet(viewsets.ModelViewSet):
             return Client.objects.filter(coach=self.request.user.coach_profile)
         return Client.objects.none()
 
+    def generate_password(self, length=10):
+        import random
+        import string
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
     def perform_create(self, serializer):
+        print(">>> perform_create appelé")  # debug
+
+        coach_profile = self.request.user.coach_profile
+
+        email = serializer.validated_data.get('email')
+
+        # vérification si le client existe deja alors lié le prospect  au client
+        existing_user = User.objects.filter(email=email).first()
+        existing_client = Client.objects.filter(email=email).first()
+
+        if existing_user and existing_client:
+            # Cas : prospect déjà inscrit → on le transforme en client
+            client = existing_client
+
+            client.coach = coach_profile
+            client.nom = serializer.validated_data.get('nom')
+            client.prenom = serializer.validated_data.get('prenom')
+
+            client.save()
+
+            print(f"Prospect transformé en client : {email}")
+
+            return  # IMPORTANT : on ne recrée pas de user
+
+        elif existing_user:
+            raise ValidationError("Un utilisateur avec cet email existe déjà.")
+
+        temp_password = self.generate_password()
+
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=temp_password,
+            first_name=serializer.validated_data.get('prenom'),
+            last_name=serializer.validated_data.get('nom')
+        )
+
+        serializer.save(
+            coach=coach_profile,
+            user=user
+        )
+
+        print(f"Compte créé pour {email} | Mot de passe temporaire : {temp_password}")
+        send_mail(
+            subject="Vos identifiants de connexion",
+            message=f"""
+        Bonjour {serializer.validated_data.get('prenom')},
+
+        Votre compte a été créé par votre coach.
+
+        Voici vos identifiants temporaires :
+
+        Email : {email}
+        Mot de passe : {temp_password}
+
+        Vous pourrez vous connecter ici :
+        http://localhost:5173/login
+
+        Merci.
+        """,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+
+    def destroy(self, request, *args, **kwargs):
         try:
-            coach_profile = self.request.user.coach_profile
-            serializer.save(coach=coach_profile)
-        except Coach.DoesNotExist:
-            raise PermissionDenied("Vous n'avez pas de profil Coach associé.")
+            instance = self.get_object()
+        except:
+            return Response({"detail": "Client introuvable."}, status=404)
+
+        # supprimer le user associé
+        if instance.user:
+            instance.user.delete()
+
+        instance.delete()
+
+        return Response(status=204)
+
 
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -360,3 +447,35 @@ class CoachCalendarView(APIView):
             })
         
         return Response(data)
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        user = authenticate(username=email, password=password)
+
+        if user is None:
+            return Response({"error": "Invalid credentials"}, status=401)
+
+        refresh = RefreshToken.for_user(user)
+
+        # DÉTECTION DU ROLE
+        if hasattr(user, 'coach_profile'):
+            role = 'coach'
+        elif hasattr(user, 'client_profile'):
+            role = 'athlete'
+        else:
+            role = 'prospect'
+
+        return Response({
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": role
+            }
+        })
