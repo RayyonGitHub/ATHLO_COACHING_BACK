@@ -17,7 +17,7 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.exceptions import PermissionDenied
 
 # Ajout de Performance et PerformanceSerializer
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer
 
 
@@ -235,41 +235,66 @@ class CoachAnalyticsView(APIView):
         today = timezone.now().date()
         seven_days_ago = today - timedelta(days=6) 
 
+        # 1. Total des athlètes
         total_athletes = coach.clients.count()
 
-        seances_7_jours = Seance.objects.filter(
-            programme__coach=coach,
-            jour_prevu__range=[seven_days_ago, today]
+        # 2. Calcul de la vraie ASSIDUITÉ (Présents vs Absents)
+        inscriptions_terminees = Inscription.objects.filter(
+            seance__coach=coach, 
+            seance__est_completee=True,
+            statut__in=['PRESENT', 'ABSENT']
         )
-
-        total_seances = seances_7_jours.count()
-        seances_completees = seances_7_jours.filter(est_completee=True).count()
-
-        completion_rate = 0
-        if total_seances > 0:
-            completion_rate = round((seances_completees / total_seances) * 100, 1)
+        presents = inscriptions_terminees.filter(statut='PRESENT').count()
+        total_appels = inscriptions_terminees.count()
         
-        total_volume = seances_completees * 450
+        assiduite = 0
+        if total_appels > 0:
+            assiduite = round((presents / total_appels) * 100)
         
+        # 3. LE VRAI CALCUL DU VOLUME (Tonnage total sur les 7 derniers jours)
+        # On récupère toutes les performances liées aux séances de ce coach cette semaine
+        performances_7j = Performance.objects.filter(
+            seance_exercice__seance__coach=coach,
+            seance_exercice__seance__jour_prevu__range=[seven_days_ago, today]
+        )
+        
+        total_volume = 0
+        for perf in performances_7j:
+            try:
+                # Sécurité : on convertit en nombres pour éviter les crashs si le champ contient du texte
+                poids = float(perf.poids_utilise) if perf.poids_utilise else 0
+                series = int(perf.series_realisees) if perf.series_realisees else 0
+                reps = int(perf.reps_realisees) if perf.reps_realisees else 0
+                
+                total_volume += (poids * series * reps)
+            except (ValueError, TypeError):
+                # Si le poids est "Poids du corps" (texte non convertible), on l'ignore dans le tonnage
+                pass
+                
+        total_volume = round(total_volume) # On arrondit proprement
+        
+        # 4. Données du graphique
         chart_data = []
+        jours_fr = {0: 'Lun', 1: 'Mar', 2: 'Mer', 3: 'Jeu', 4: 'Ven', 5: 'Sam', 6: 'Dim'}
+        
         for i in range(7):
             date_target = seven_days_ago + timedelta(days=i)
-            count_day = seances_7_jours.filter(
+            count_day = Seance.objects.filter(
+                coach=coach,
                 jour_prevu=date_target, 
                 est_completee=True
             ).count()
             
             chart_data.append({
-                "day": date_target.strftime('%a'),
+                "day": jours_fr[date_target.weekday()],
                 "sessions": count_day
             })
 
         return Response({
             "total_athletes": total_athletes,
-            "completion_rate": completion_rate,
+            "completion_rate": assiduite, 
             "total_volume": total_volume,  
-            "chart_data": chart_data,
-            "period": "7 derniers jours"
+            "chart_data": chart_data
         })
 
 # --- NOUVELLE VUE : ISSUE #14 (Enregistrement de Performance) ---
@@ -298,12 +323,23 @@ class CoachCalendarView(APIView):
         
         data = []
         for s in seances:
-            inscriptions = s.inscriptions.filter(statut='CONFIRME')
-            nb_inscrits = inscriptions.count()
+            toutes_inscriptions = s.inscriptions.all()
+            inscriptions_confirmees = s.inscriptions.filter(statut='CONFIRME')
+            nb_inscrits = inscriptions_confirmees.count()
+            participants_data = []
+            for ins in toutes_inscriptions:
+                participants_data.append({
+                    "id": ins.id,
+                    "client_name": f"{ins.client.prenom} {ins.client.nom.upper()}",
+                    "statut": ins.statut,
+                    # On convertit la date en texte si elle existe, sinon on met une date vide
+                    "date_inscription": ins.date_inscription.isoformat() if hasattr(ins, 'date_inscription') else None
+                })
+            # ---------------------------------------------------------------------------
 
             # CAS 1 : Séance Collective (Groupe)
             if s.est_collective:
-                noms_liste = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions]
+                noms_liste = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions_confirmees]
                 client_display = ", ".join(noms_liste) if noms_liste else "Aucun inscrit"
                 capacity_info = f"{nb_inscrits}/{s.capacite_max}"
             
@@ -317,11 +353,11 @@ class CoachCalendarView(APIView):
                     capacity_info = "1/1"
                 elif nb_inscrits > 0:
                     # Cas où on a utilisé la table Inscription pour une séance individuelle
-                    first_ins = inscriptions.first()
+                    first_ins = inscriptions_confirmees.first()
                     client_display = f"{first_ins.client.prenom} {first_ins.client.nom.upper()}"
                     capacity_info = "1/1"
                 else:
-                    # Cas "ana ana" : pas d'athlète sur le programme et pas d'inscription
+                    # Cas : pas d'athlète sur le programme et pas d'inscription
                     client_display = "En attente d'athlète"
                     capacity_info = "0/1"
 
@@ -335,7 +371,13 @@ class CoachCalendarView(APIView):
                 "type": "collective" if s.est_collective else "individuelle",
                 "capacity_label": capacity_info,
                 "client_name": client_display,
-                "completed": s.est_completee
+                "completed": s.est_completee,
+                
+                # 👇 VOILÀ CE QUI MANQUAIT POUR REACT ! 👇
+                "capacite_max": s.capacite_max if s.capacite_max else 1,
+                "nombre_inscrits": nb_inscrits,
+                "participants": participants_data
+                # 👆 --------------------------------- 👆
             })
             
         # 2. Traitement des Indisponibilités
@@ -345,15 +387,18 @@ class CoachCalendarView(APIView):
                 "id": f"indispo_{ind.id}",
                 "db_id": ind.id,
                 "title": ind.titre,
-                # 👇 LES DEUX LIGNES QUI CHANGENT 👇
                 "start": f"{ind.jour_prevu}T{ind.heure_debut}",
                 "end": f"{ind.jour_prevu}T{ind.heure_fin}",
-                # 👆 ---------------------------- 👆
                 "is_collective": False,
                 "type": "conge" if ind.est_conge else "indisponibilite",
                 "capacity_label": "",
                 "client_name": "",
-                "completed": False
+                "completed": False,
+                
+                # On met des valeurs vides pour que React ne crashe pas
+                "capacite_max": 1,
+                "nombre_inscrits": 0,
+                "participants": []
             })
         
         return Response(data)
@@ -424,3 +469,54 @@ def export_coach_calendar(request, coach_id):
     response['Content-Disposition'] = f'attachment; filename="athlo_agenda_{coach_id}.ics"'
     
     return response
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def remove_participant(request, inscription_id):
+    inscription = get_object_or_404(Inscription, id=inscription_id)
+    
+    if inscription.seance.coach.user != request.user:
+        return Response({"error": "Vous n'avez pas le droit de modifier cette séance."}, status=403)
+    
+    seance = inscription.seance
+    etait_confirme = (inscription.statut == 'CONFIRME')
+    
+    # 1. On supprime l'inscription
+    inscription.delete()
+    
+    # 2. LOGIQUE DE LISTE D'ATTENTE (Auto-promotion)
+    message = "Participant retiré de la séance."
+    if etait_confirme and seance.est_collective:
+        # On compte combien de confirmés il reste
+        inscrits_count = seance.inscriptions.filter(statut='CONFIRME').count()
+        
+        # S'il y a de la place, on cherche le plus ancien en liste d'attente
+        if inscrits_count < seance.capacite_max:
+            premier_en_attente = seance.inscriptions.filter(statut='ATTENTE').order_by('date_inscription').first()
+            
+            if premier_en_attente:
+                # On le promeut !
+                premier_en_attente.statut = 'CONFIRME'
+                premier_en_attente.save()
+                message = f"Participant retiré. {premier_en_attente.client.prenom} a été automatiquement promu depuis la liste d'attente."
+    
+    return Response({"message": message}, status=200)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_inscription_status(request, inscription_id):
+    inscription = get_object_or_404(Inscription, id=inscription_id)
+    
+    # Vérification de sécurité
+    if inscription.seance.coach.user != request.user:
+        return Response({"error": "Non autorisé"}, status=403)
+        
+    nouveau_statut = request.data.get('statut')
+    
+    # On autorise le passage en PRESENT ou ABSENT
+    if nouveau_statut in ['PRESENT', 'ABSENT', 'CONFIRME']:
+        inscription.statut = nouveau_statut
+        inscription.save()
+        return Response({"message": f"Statut mis à jour en {nouveau_statut}", "statut": nouveau_statut}, status=200)
+        
+    return Response({"error": "Statut invalide"}, status=400)
