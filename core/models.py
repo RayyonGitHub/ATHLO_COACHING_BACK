@@ -2,7 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-
+from django.db.models.signals import post_save, post_delete,pre_save
+from django.dispatch import receiver
 def validate_non_negatif(value):
     if value <= 0:
         raise ValidationError("Cette valeur doit être supérieure à 0.")
@@ -275,3 +276,140 @@ class Avis(models.Model):
     commentaire = models.TextField(blank=True)
     date = models.DateTimeField(auto_now_add=True)
 
+
+
+class Notification(models.Model):
+    TYPES = [
+        ('INSCRIPTION', 'Nouvelle inscription'),
+        ('DESINSCRIPTION', 'Désinscription'),
+        ('LISTE_ATTENTE', "Passage en liste d'attente"),
+        ('RAPPEL', 'Rappel de séance'),
+        ('ANNULATION', 'Séance annulée'),
+        ('MODIFICATION', 'Séance modifiée'),
+    ]
+
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='notifications')
+    seance = models.ForeignKey(Seance, on_delete=models.SET_NULL, null=True, blank=True) 
+    message = models.TextField()
+    type = models.CharField(max_length=20, choices=TYPES)
+    est_lu = models.BooleanField(default=False)
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_creation']
+
+    def __str__(self):
+        return f"{self.type} - {self.coach.user.username}"
+    
+    def save(self, *args, **kwargs):
+        # 1. On sauvegarde normalement
+        super().save(*args, **kwargs)
+        
+        # 2. On nettoie si on dépasse 10 (on le fait après pour ne pas bloquer le reste)
+        try:
+            notifs = Notification.objects.filter(coach=self.coach).order_by('-date_creation')
+            if notifs.count() > 10:
+                ids_to_keep = notifs.values_list('id', flat=True)[:10]
+                Notification.objects.filter(coach=self.coach).exclude(id__in=list(ids_to_keep)).delete()
+        except Exception as e:
+            print(f"Erreur nettoyage notifs: {e}")
+
+
+# --------------------------------------------------------
+# SIGNAUX : INSCRIPTIONS
+# --------------------------------------------------------
+@receiver(post_save, sender=Inscription)
+def create_notification_on_inscription(sender, instance, created, **kwargs):
+    print(f"DEBUG: Signal Inscription reçu ! Created: {created}")
+    if created:
+        coach = instance.seance.coach
+        client_name = f"{instance.client.prenom} {instance.client.nom}"
+        seance_titre = instance.seance.titre
+        
+        msg = f"{client_name} s'est inscrit à la séance : {seance_titre}"
+        if instance.statut == 'ATTENTE':
+            msg = f"{client_name} est en liste d'attente pour : {seance_titre}"
+            
+        Notification.objects.create(
+            coach=coach,
+            seance=instance.seance,
+            message=msg,
+            type='INSCRIPTION' if instance.statut == 'CONFIRME' else 'LISTE_ATTENTE'
+        )
+
+@receiver(post_delete, sender=Inscription)
+def create_notification_on_desinscription(sender, instance, **kwargs):
+    client_name = f"{instance.client.prenom} {instance.client.nom}"
+    Notification.objects.create(
+        coach=instance.seance.coach,
+        seance=instance.seance, 
+        message=f"{client_name} s'est désinscrit de la séance : {instance.seance.titre}",
+        type='DESINSCRIPTION'
+    )
+
+
+# --------------------------------------------------------
+# SIGNAUX : SÉANCES (Modifications & Suppressions)
+# --------------------------------------------------------
+@receiver(pre_save, sender=Seance)
+def notifier_modification_seance(sender, instance, **kwargs):
+    if instance.pk:
+        try:
+            ancienne_seance = Seance.objects.get(pk=instance.pk)
+            
+            if instance.est_completee and not ancienne_seance.est_completee:
+                Notification.objects.create(
+                    coach=instance.coach,
+                    seance=instance,
+                    type='ANNULATION', 
+                    message=f"La séance '{instance.titre}' a été clôturée."
+                )
+            elif (instance.jour_prevu != ancienne_seance.jour_prevu or 
+                  instance.heure_debut != ancienne_seance.heure_debut or 
+                  instance.heure_fin != ancienne_seance.heure_fin):
+                Notification.objects.create(
+                    coach=instance.coach,
+                    seance=instance,
+                    type='MODIFICATION',
+                    message=f"L'horaire ou la durée de la séance '{instance.titre}' a été modifié(e)."
+                )
+        except Seance.DoesNotExist:
+            pass
+
+@receiver(post_delete, sender=Seance)
+def notifier_suppression_seance(sender, instance, **kwargs):
+    Notification.objects.create(
+        coach=instance.coach,
+        type='ANNULATION',
+        message=f"La séance '{instance.titre}' a été définitivement supprimée de l'agenda."
+    )
+
+
+# --------------------------------------------------------
+# SIGNAUX : INDISPONIBILITÉS / CONGÉS
+# --------------------------------------------------------
+@receiver(pre_save, sender=Indisponibilite)
+def notifier_modification_indispo(sender, instance, **kwargs):
+    if instance.pk:
+        try:
+            ancienne_indispo = Indisponibilite.objects.get(pk=instance.pk)
+            if (instance.jour_prevu != ancienne_indispo.jour_prevu or 
+                instance.heure_debut != ancienne_indispo.heure_debut or
+                instance.heure_fin != ancienne_indispo.heure_fin):
+                type_event = "Le congé" if getattr(instance, 'est_conge', False) else "L'indisponibilité"
+                Notification.objects.create(
+                    coach=instance.coach, 
+                    type='MODIFICATION', 
+                    message=f"{type_event} '{instance.titre}' a été déplacé(e) ou redimensionné(e)."
+                )
+        except Indisponibilite.DoesNotExist:
+            pass
+
+@receiver(post_delete, sender=Indisponibilite)
+def notifier_suppression_indispo(sender, instance, **kwargs):
+    type_event = "Le congé" if getattr(instance, 'est_conge', False) else "L'indisponibilité"
+    Notification.objects.create(
+        coach=instance.coach, 
+        type='ANNULATION', 
+        message=f"{type_event} '{instance.titre}' a été annulé(e) / supprimé(e)."
+    )

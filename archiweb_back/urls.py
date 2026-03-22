@@ -7,9 +7,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, 
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet, 
-    AthleteDashboardView, AthleteStatsView, # <-- 1. AJOUTÉ ICI
+AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
-    PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
+    PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet, NotificationViewSet,
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -25,6 +25,7 @@ router.register(r'exercices', ExerciceViewSet, basename='exercice')
 router.register(r'programmes', ProgrammeViewSet, basename='programme')
 router.register(r'seances', SeanceViewSet, basename='seance')
 router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
