@@ -50,13 +50,7 @@ class SeanceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Seance
-        fields = [
-            'id', 'coach', 'programme', 'titre', 'ordre', 'jour_prevu', 
-            'heure_debut', 'heure_fin', 'est_collective', 'capacite_max',
-            'est_completee', 'commentaire_coach', 'ressenti_client', 
-            'notes_client', 'exercices_details', 'volume_total',
-            'participants', 'nombre_inscrits', 'places_restantes'
-        ]
+        fields = '__all__'
         read_only_fields = ['coach']
 
     def validate_capacite_max(self, value):

@@ -29,6 +29,6 @@ def generer_rappels_automatiques():
                 coach=seance.coach,
                 seance=seance,
                 type='RAPPEL',
-                message=f"⏰ Rappel : Ta séance '{seance.titre}' a lieu aujourd'hui à {heure_texte}."
+                message=f" Rappel : Ta séance '{seance.titre}' a lieu aujourd'hui à {heure_texte}."
             )
             print(f"[AUTO] Rappel généré pour la séance du jour : {seance.titre}")
