@@ -246,12 +246,15 @@ class AthleteDashboardView(APIView):
                 "progression": int((faits/total)*100) if total > 0 else 0
             }
 
-        # --- LE FAMEUX CALCUL DU BMR (CALORIES MAX) ---
-        calories_max_objectif = 2400 
+        # --- LE NOUVEAU CALCUL DE L'OBJECTIF (CALORIES ACTIVES) ---
+        # Objectif par défaut de 500 Kcal "Actives" (Sport)
+        calories_max_objectif = 500 
         if client.poids and client.taille and client.age:
             try:
                 bmr = (10 * float(client.poids)) + (6.25 * float(client.taille)) - (5 * float(client.age)) + 5
-                calories_max_objectif = int(bmr * 1.55)
+                # Au lieu du total journalier (x1.55), on prend 20% du métabolisme de base
+                # C'est l'équivalent d'une très bonne séance de sport !
+                calories_max_objectif = int(bmr * 0.20)
             except (ValueError, TypeError):
                 pass
 
