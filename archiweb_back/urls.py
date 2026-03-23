@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -19,6 +21,9 @@ from core.views import export_coach_calendar, remove_participant, update_inscrip
 from core.views_messages import (
     AvailableContactsView,
     ConversationListCreateView,
+    ConversationDetailView,
+    ConversationMembersView,
+    ConversationMemberDeleteView,
     ConversationMessagesView,
     ConversationReadView,
 )
@@ -70,9 +75,15 @@ urlpatterns = [
     path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
     path('api/inscriptions/<int:inscription_id>/status/', update_inscription_status, name='update-inscription-status'),
 
-    # Messagerie
+    # Messagerie V2
     path('api/messages/contacts/', AvailableContactsView.as_view(), name='message-contacts'),
     path('api/messages/conversations/', ConversationListCreateView.as_view(), name='message-conversations'),
+    path('api/messages/conversations/<int:conversation_id>/', ConversationDetailView.as_view(), name='message-conversation-detail'),
+    path('api/messages/conversations/<int:conversation_id>/members/', ConversationMembersView.as_view(), name='message-conversation-members'),
+    path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

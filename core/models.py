@@ -449,3 +449,91 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Message de {self.sender.username} - Conversation #{self.conversation.id}"
+    
+    from django.contrib.auth.models import User
+from django.core.validators import FileExtensionValidator
+
+
+# --------------------------------------------------------
+# MESSAGERIE INTERNE V2
+# --------------------------------------------------------
+
+class Conversation(models.Model):
+    CONVERSATION_TYPES = [
+        ('direct', 'Directe'),
+        ('group', 'Groupe'),
+    ]
+
+    conversation_type = models.CharField(max_length=20, choices=CONVERSATION_TYPES, default='direct')
+    title = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_conversations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+
+    def __str__(self):
+        if self.conversation_type == 'group':
+            return self.title or f"Groupe #{self.id}"
+        return f"Conversation directe #{self.id}"
+
+
+class ConversationParticipant(models.Model):
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='participants')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_conversations')
+    joined_at = models.DateTimeField(auto_now_add=True)
+    last_read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('conversation', 'user')
+
+    def __str__(self):
+        return f"{self.user.username} dans {self.conversation}"
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
+    content = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_deleted = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Message de {self.sender.username} - Conversation #{self.conversation.id}"
+
+
+def message_attachment_upload_path(instance, filename):
+    return f"messages/conversation_{instance.message.conversation.id}/{filename}"
+
+
+class MessageAttachment(models.Model):
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='attachments')
+    file = models.FileField(
+        upload_to=message_attachment_upload_path,
+        validators=[
+            FileExtensionValidator(
+                allowed_extensions=[
+                    'jpg', 'jpeg', 'png', 'gif', 'webp',
+                    'pdf', 'doc', 'docx', 'txt',
+                    'xls', 'xlsx', 'csv'
+                ]
+            )
+        ]
+    )
+    original_name = models.CharField(max_length=255)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return self.original_name
+
+    @property
+    def is_image(self):
+        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+        return self.original_name.lower().endswith(image_extensions)

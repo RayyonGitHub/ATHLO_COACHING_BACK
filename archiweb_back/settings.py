@@ -148,3 +148,7 @@ EMAIL_HOST_USER = 'mcevik6738@gmail.com'
 EMAIL_HOST_PASSWORD = 'quyq ctlw robd kzgc'
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# --- MEDIA FILES (MESSAGERIE) ---
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'

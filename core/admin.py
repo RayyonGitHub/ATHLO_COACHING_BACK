@@ -10,6 +10,7 @@ from .models import (
     Conversation,
     ConversationParticipant,
     Message,
+    MessageAttachment,
 )
 
 # Profils
@@ -44,9 +45,15 @@ class ConversationParticipantAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ('id', 'conversation', 'sender', 'short_content', 'created_at')
+    list_display = ('id', 'conversation', 'sender', 'short_content', 'created_at', 'is_deleted')
     search_fields = ('sender__username', 'sender__email', 'content', 'conversation__title')
-    list_filter = ('created_at',)
+    list_filter = ('created_at', 'is_deleted')
 
     def short_content(self, obj):
-        return obj.content[:50]
+        return obj.content[:50] if obj.content else "[Pièce jointe]"
+
+
+@admin.register(MessageAttachment)
+class MessageAttachmentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'message', 'original_name', 'uploaded_at')
+    search_fields = ('original_name',)
