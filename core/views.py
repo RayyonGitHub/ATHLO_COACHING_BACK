@@ -363,8 +363,7 @@ def post(self, request):
                 "role": role
             }
         })
-
-    def get(self, request):
+def get(self, request):
         return Response({"total_exercices": Exercice.objects.count(), "total_coachs": Coach.objects.count()})
 
 
