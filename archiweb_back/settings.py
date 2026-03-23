@@ -2,6 +2,7 @@
 """
 from datetime import timedelta
 from pathlib import Path
+from corsheaders.defaults import default_headers
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -85,7 +86,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'fr-fr' # Mis en français pour plus de confort
 TIME_ZONE = 'Europe/Paris'
 USE_I18N = True
-USE_TZ = True
+USE_TZ = False
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
@@ -100,6 +101,14 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'cache-control',
+    'x-requested-with',
+    'content-type',
+    'accept',
+    'origin',
+    'authorization',
+]
 
 # --- CONFIGURATION REST FRAMEWORK (Issue #3) ---
 REST_FRAMEWORK = {
