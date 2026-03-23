@@ -337,15 +337,7 @@ def create_notification_on_inscription(sender, instance, created, **kwargs):
             type='INSCRIPTION' if instance.statut == 'CONFIRME' else 'LISTE_ATTENTE'
         )
 
-@receiver(post_delete, sender=Inscription)
-def create_notification_on_desinscription(sender, instance, **kwargs):
-    client_name = f"{instance.client.prenom} {instance.client.nom}"
-    Notification.objects.create(
-        coach=instance.seance.coach,
-        seance=instance.seance, 
-        message=f"{client_name} s'est désinscrit de la séance : {instance.seance.titre}",
-        type='DESINSCRIPTION'
-    )
+
 
 
 # --------------------------------------------------------
@@ -376,13 +368,7 @@ def notifier_modification_seance(sender, instance, **kwargs):
         except Seance.DoesNotExist:
             pass
 
-@receiver(post_delete, sender=Seance)
-def notifier_suppression_seance(sender, instance, **kwargs):
-    Notification.objects.create(
-        coach=instance.coach,
-        type='ANNULATION',
-        message=f"La séance '{instance.titre}' a été définitivement supprimée de l'agenda."
-    )
+
 
 
 # --------------------------------------------------------

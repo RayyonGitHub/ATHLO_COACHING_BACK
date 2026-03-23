@@ -154,30 +154,63 @@ class SeanceViewSet(viewsets.ModelViewSet):
     @transaction.atomic 
     def create(self, request, *args, **kwargs):
         data = request.data
+        coach_profile = request.user.coach_profile
+        
+        # On récupère les infos de base
+        titre = data.get('titre', 'Nouvelle séance')
+        jour = data.get('jour_prevu')
+        h_debut = data.get('heure_debut')
+        h_fin = data.get('heure_fin')
+        
+        # Récupération du programme (facultatif)
         programme_id = data.get('programme_id')
+        programme = None
+        if programme_id:
+            programme = get_object_or_404(Programme, id=programme_id)
 
-        if not programme_id:
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save(coach=request.user.coach_profile)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        programme = get_object_or_404(Programme, id=programme_id)
+        # CRÉATION DE LA SÉANCE
         seance = Seance.objects.create(
-            coach=request.user.coach_profile,
+            coach=coach_profile,
             programme=programme,
-            titre=data.get('titre'),
-            ordre=Seance.objects.filter(programme=programme).count() + 1
+            titre=titre,
+            jour_prevu=jour,
+            heure_debut=h_debut,
+            heure_fin=h_fin,
+            est_collective=data.get('est_collective', False),
+            capacite_max=data.get('capacite_max', 1),
+            est_completee=data.get('est_completee', False)
         )
 
-        for exo_data in data.get('exercices', []):
+        # Si tu as des exercices envoyés en même temps
+        exercices_data = data.get('exercices', [])
+        for exo_data in exercices_data:
             exercice = get_object_or_404(Exercice, id=exo_data.get('exercice_id'))
-            # On retire l'id pour ne pas l'envoyer en double dans le create
-            params = exo_data.copy()
-            params.pop('exercice_id', None)
-            SeanceExercice.objects.create(seance=seance, exercice=exercice, **params)
+            SeanceExercice.objects.create(
+                seance=seance,
+                exercice=exercice,
+                series=exo_data.get('series', 3),
+                repetitions=exo_data.get('repetitions', '10'),
+                poids=exo_data.get('poids', 'Poids du corps')
+            )
 
-        return Response(self.get_serializer(seance).data, status=status.HTTP_201_CREATED)
+        serializer = self.get_serializer(seance)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        
+        # Suppression des inscriptions sans signal
+        instance.inscriptions.all().delete()
+        
+        # Notification de suppression de séance
+        Notification.objects.create(
+            coach=instance.coach,
+            seance=None,
+            type='ANNULATION',
+            message=f"La séance '{instance.titre}' a été définitivement supprimée de l'agenda."
+        )
+        
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 # --- ANALYTICS ET DASHBOARD ATHLÈTE ---
 
@@ -274,8 +307,48 @@ class CoachAnalyticsView(APIView):
     def get(self, request):
         if not hasattr(request.user, 'coach_profile'):
             return Response({"error": "Coach requis"}, status=403)
+            
         coach = request.user.coach_profile
-        return Response({"total_athletes": coach.clients.count(), "total_volume": 0})
+        
+        # 1. Calcul du total des athlètes
+        total_athletes = coach.clients.count()
+
+        # 2. Vrai calcul de l'assiduité basé sur ton modèle Seance
+        seances_totales = Seance.objects.filter(coach=coach).count()
+        seances_faites = Seance.objects.filter(coach=coach, est_completee=True).count()
+        completion_rate = int((seances_faites / seances_totales) * 100) if seances_totales > 0 else 0
+
+        # 3. Vraies données pour le graphique : les séances complétées sur les 7 derniers jours
+        aujourd_hui = timezone.now().date()
+        il_y_a_7_jours = aujourd_hui - timedelta(days=6)
+        
+        # On regroupe les séances par jour
+        seances_recentes = Seance.objects.filter(
+            coach=coach, 
+            jour_prevu__gte=il_y_a_7_jours,
+            jour_prevu__lte=aujourd_hui,
+            est_completee=True
+        ).values('jour_prevu').annotate(sessions=Count('id'))
+
+        # On prépare un dictionnaire pour s'assurer que les 7 jours sont présents (même ceux à 0)
+        chart_data_dict = { (il_y_a_7_jours + timedelta(days=i)): 0 for i in range(7) }
+        for s in seances_recentes:
+            if s['jour_prevu'] in chart_data_dict:
+                chart_data_dict[s['jour_prevu']] = s['sessions']
+
+        # On formate la liste exactement comme React l'attend
+        real_chart_data = [
+            {"day": day.strftime("%a"), "sessions": count} 
+            for day, count in chart_data_dict.items()
+        ]
+
+        # 4. Envoi de la réponse au front
+        return Response({
+            "total_athletes": total_athletes,
+            "completion_rate": completion_rate,
+            "total_volume": 0, # Mettre ici la logique de volume si tu as un modèle de charge soulevée
+            "chart_data": real_chart_data
+        })
 
 class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
@@ -301,17 +374,74 @@ class LoginView(APIView):
 
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
-    def get(self, request, coach_id):
-        coach = get_object_or_404(Coach, id=coach_id)
-        seances = Seance.objects.filter(coach=coach)
-        data = [{"id": s.id, "title": s.titre, "start": str(s.jour_prevu)} for s in seances]
+
+    def get(self, request, coach_id=None): # Supporte l'ID ou le token
+        if hasattr(request.user, 'coach_profile'):
+            coach = request.user.coach_profile
+        else:
+            coach = get_object_or_404(Coach, id=coach_id)
+            
+        seances = Seance.objects.filter(coach=coach).prefetch_related('inscriptions__client')
+        
+        data = []
+        for s in seances:
+            inscriptions = s.inscriptions.all()
+            
+            # --- Ta logique de nom d'athlète (restaurée) ---
+            if s.est_collective:
+                noms = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions]
+                client_display = ", ".join(noms) if noms else "Aucun inscrit"
+            else:
+                athlete = s.programme.athlete if s.programme else None
+                client_display = f"{athlete.prenom} {athlete.nom.upper()}" if athlete else "En attente"
+
+            # --- Formatage pour FullCalendar (indispensable) ---
+            start_dt = f"{s.jour_prevu}T{s.heure_debut}" if s.heure_debut else str(s.jour_prevu)
+            end_dt = f"{s.jour_prevu}T{s.heure_fin}" if s.heure_fin else start_dt
+
+            data.append({
+    "id": s.id,
+    "db_id": s.id,
+    "title": s.titre,
+    "start": start_dt,
+    "end": end_dt,
+    "client_name": client_display,
+    "is_collective": s.est_collective,
+    "est_collective": s.est_collective,
+    "completed": s.est_completee,
+    "est_completee": s.est_completee,
+    "capacite_max": s.capacite_max,
+    "nombre_inscrits": inscriptions.filter(statut='CONFIRME').count(),
+    "type": "collective" if s.est_collective else "individuelle",  # ← manquait dans le merge
+    "participants": [
+        {
+            "id": ins.id,
+            "client_id": ins.client.id,
+            "client_name": f"{ins.client.prenom} {ins.client.nom}",
+            "statut": ins.statut,
+            "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
+        } for ins in inscriptions
+    ]
+})
         return Response(data)
 
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
     serializer_class = IndisponibiliteSerializer
     permission_classes = [IsAuthenticated]
     def get_queryset(self):
-        return Indisponibilite.objects.filter(coach=self.request.user.coach_profile) if hasattr(self.request.user, 'coach_profile') else Indisponibilite.objects.none()
+        # On ne voit que ses propres indispos
+        if hasattr(self.request.user, 'coach_profile'):
+            return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
+        return Indisponibilite.objects.none()
+
+    # --- AJOUTE CE BLOC ICI ---
+    def perform_create(self, serializer):
+        # On force l'enregistrement du coach connecté
+        if hasattr(self.request.user, 'coach_profile'):
+            serializer.save(coach=self.request.user.coach_profile)
+        else:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Seul un coach peut créer une indisponibilité.")
 
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
@@ -325,7 +455,24 @@ def update_inscription_status(request, inscription_id):
 @permission_classes([IsAuthenticated])
 def remove_participant(request, inscription_id):
     ins = get_object_or_404(Inscription, id=inscription_id)
+    
+    # On sauvegarde les infos AVANT suppression
+    coach = ins.seance.coach
+    client_name = f"{ins.client.prenom} {ins.client.nom}"
+    seance = ins.seance
+    seance_titre = ins.seance.titre
+    
+    # Suppression propre sans signal
     ins.delete()
+    
+    # Notification créée manuellement ici
+    Notification.objects.create(
+        coach=coach,
+        seance=seance,
+        message=f"{client_name} s'est désinscrit de la séance : {seance_titre}",
+        type='DESINSCRIPTION'
+    )
+    
     return Response(status=204)
 
 @api_view(['GET'])
@@ -335,36 +482,12 @@ def export_coach_calendar(request, coach_id):
 
 class DemoStatsView(APIView):
     permission_classes = [AllowAny]
-def post(self, request):
-        email = request.data.get("email")
-        password = request.data.get("password")
-
-        user = authenticate(username=email, password=password)
-
-        if user is None:
-            return Response({"error": "Invalid credentials"}, status=401)
-
-        refresh = RefreshToken.for_user(user)
-
-        # DÉTECTION DU ROLE
-        if hasattr(user, 'coach_profile'):
-            role = 'coach'
-        elif hasattr(user, 'client_profile'):
-            role = 'athlete'
-        else:
-            role = 'prospect'
-
+    
+    def get(self, request):
         return Response({
-            "token": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": role
-            }
+            "total_exercices": Exercice.objects.count(), 
+            "total_coachs": Coach.objects.count()
         })
-def get(self, request):
-        return Response({"total_exercices": Exercice.objects.count(), "total_coachs": Coach.objects.count()})
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
