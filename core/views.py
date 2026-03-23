@@ -7,7 +7,7 @@ from django.db import transaction
 import datetime
 from django.http import HttpResponse
 from icalendar import Calendar, Event
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes,action
 from rest_framework.permissions import AllowAny
 
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -20,8 +20,8 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.exceptions import PermissionDenied
 
 # Ajout de Performance et PerformanceSerializer
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription
-from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription, Notification
+from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, NotificationSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer, NotificationSerializer
 
 # partie création de client
 from rest_framework.exceptions import ValidationError
@@ -678,3 +678,19 @@ class LoginView(APIView):
                 "role": role
             }
         })
+class NotificationViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Sécurité : Un coach ne voit QUE ses propres notifications
+        if hasattr(self.request.user, 'coach_profile'):
+            return Notification.objects.filter(coach=self.request.user.coach_profile)
+        return Notification.objects.none()
+
+    @action(detail=False, methods=['POST'])
+    def marquer_tout_lu(self, request):
+        # Cette fonction sera appelée quand le coach cliquera sur "Tout marquer comme lu"
+        notifications = self.get_queryset().filter(est_lu=False)
+        notifications.update(est_lu=True)
+        return Response({'status': 'Toutes les notifications ont été marquées comme lues', 'count': notifications.count()})

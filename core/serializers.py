@@ -1,6 +1,6 @@
 from rest_framework import serializers
 # Ajout de Performance dans les imports
-from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription
+from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription,Notification
 
 # Serializer pour l'Annuaire
 class ClientSerializer(serializers.ModelSerializer):
@@ -116,3 +116,9 @@ class IndisponibiliteSerializer(serializers.ModelSerializer):
         model = Indisponibilite
         fields = '__all__'
         read_only_fields = ['coach']
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'message', 'type', 'est_lu', 'date_creation', 'seance']
+        read_only_fields = ['id', 'date_creation']
+
