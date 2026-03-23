@@ -11,6 +11,7 @@ from .models import (
     ConversationParticipant,
     Message,
     MessageAttachment,
+    Performance, # <-- AJOUTÉ ICI
 )
 
 # Profils
@@ -22,6 +23,7 @@ admin.site.register(Exercice)
 admin.site.register(Programme)
 admin.site.register(Seance)
 admin.site.register(SeanceExercice)
+admin.site.register(Performance) # <-- AJOUTÉ ICI
 
 
 @admin.register(Inscription)
