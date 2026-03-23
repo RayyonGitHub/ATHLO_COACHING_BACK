@@ -17,12 +17,9 @@ from django.core.mail import send_mail
 from rest_framework import viewsets, status, generics
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
-
-from icalendar import Calendar, Event
 
 from .models import Client, Coach, Exercice, Programme, Seance, SeanceExercice, Performance, Indisponibilite, Inscription, Notification
 from .serializers import ClientSerializer, CoachSerializer, ExerciceSerializer, ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, IndisponibiliteSerializer, NotificationSerializer
@@ -195,6 +192,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(seance)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         
@@ -248,11 +246,44 @@ class AthleteDashboardView(APIView):
                 "progression": int((faits/total)*100) if total > 0 else 0
             }
 
+        # --- LE FAMEUX CALCUL DU BMR (CALORIES MAX) ---
+        calories_max_objectif = 2400 
+        if client.poids and client.taille and client.age:
+            try:
+                bmr = (10 * float(client.poids)) + (6.25 * float(client.taille)) - (5 * float(client.age)) + 5
+                calories_max_objectif = int(bmr * 1.55)
+            except (ValueError, TypeError):
+                pass
+
+        # --- CALCUL DES CALORIES BRÛLÉES AUJOURD'HUI ---
+        today = timezone.now().date()
+        performances_du_jour = Performance.objects.filter(
+            client=client,
+            date_enregistrement__date=today
+        )
+        total_series_jour = 0
+        for perf in performances_du_jour:
+            try:
+                total_series_jour += int(perf.series_realisees)
+            except (ValueError, TypeError):
+                pass
+        
+        calories_brulees = total_series_jour * 15
+
+        # --- COMPLÉTION DU CERCLE ---
+        completion_jour = 0
+        if calories_max_objectif > 0:
+            completion_jour = min(int((calories_brulees / calories_max_objectif) * 100), 100)
+
         return Response({
             "prenom": client.prenom,
             "prochaine_seance": seance_data,
             "programme_actuel": prog_data,
-            "stats_sante": {"completion_jour": 0, "calories": 0, "calories_max": 2500}
+            "stats_sante": {
+                "completion_jour": completion_jour, 
+                "calories": calories_brulees, 
+                "calories_max": calories_max_objectif
+            }
         })
 
 class AthleteStatsView(APIView):
@@ -375,7 +406,7 @@ class LoginView(APIView):
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, coach_id=None): # Supporte l'ID ou le token
+    def get(self, request, coach_id=None):
         if hasattr(request.user, 'coach_profile'):
             coach = request.user.coach_profile
         else:
@@ -400,29 +431,29 @@ class CoachCalendarView(APIView):
             end_dt = f"{s.jour_prevu}T{s.heure_fin}" if s.heure_fin else start_dt
 
             data.append({
-    "id": s.id,
-    "db_id": s.id,
-    "title": s.titre,
-    "start": start_dt,
-    "end": end_dt,
-    "client_name": client_display,
-    "is_collective": s.est_collective,
-    "est_collective": s.est_collective,
-    "completed": s.est_completee,
-    "est_completee": s.est_completee,
-    "capacite_max": s.capacite_max,
-    "nombre_inscrits": inscriptions.filter(statut='CONFIRME').count(),
-    "type": "collective" if s.est_collective else "individuelle",  # ← manquait dans le merge
-    "participants": [
-        {
-            "id": ins.id,
-            "client_id": ins.client.id,
-            "client_name": f"{ins.client.prenom} {ins.client.nom}",
-            "statut": ins.statut,
-            "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
-        } for ins in inscriptions
-    ]
-})
+                "id": s.id,
+                "db_id": s.id,
+                "title": s.titre,
+                "start": start_dt,
+                "end": end_dt,
+                "client_name": client_display,
+                "is_collective": s.est_collective,
+                "est_collective": s.est_collective,
+                "completed": s.est_completee,
+                "est_completee": s.est_completee,
+                "capacite_max": s.capacite_max,
+                "nombre_inscrits": inscriptions.filter(statut='CONFIRME').count(),
+                "type": "collective" if s.est_collective else "individuelle",
+                "participants": [
+                    {
+                        "id": ins.id,
+                        "client_id": ins.client.id,
+                        "client_name": f"{ins.client.prenom} {ins.client.nom}",
+                        "statut": ins.statut,
+                        "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
+                    } for ins in inscriptions
+                ]
+            })
         return Response(data)
 
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
