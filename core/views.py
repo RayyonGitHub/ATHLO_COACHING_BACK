@@ -1,3 +1,4 @@
+import random # <-- NOUVEAU : Import pour le Mock intelligent
 import datetime
 from datetime import timedelta
 from django.utils import timezone
@@ -36,7 +37,6 @@ class ClientViewSet(viewsets.ModelViewSet):
         return Client.objects.none()
 
     def generate_password(self, length=10):
-        import random
         import string
         return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
@@ -275,6 +275,18 @@ class AthleteDashboardView(APIView):
         if calories_max_objectif > 0:
             completion_jour = min(int((calories_brulees / calories_max_objectif) * 100), 100)
 
+        # --- LE MOCK INTELLIGENT (APIs Tierces) ---
+        # On utilise une "graine" basée sur l'ID du client et la date du jour.
+        # Résultat : Les données ont l'air aléatoires mais restent stables toute la journée !
+        random.seed(client.id + today.toordinal())
+        
+        pas_jour = random.randint(4500, 12500)
+        hydratation = round(random.uniform(0.8, 3.2), 1)
+        sommeil_h = random.randint(5, 9)
+        sommeil_m = random.randint(0, 59)
+        fc_repos = random.randint(55, 80)
+        recuperation = random.randint(60, 100)
+
         return Response({
             "prenom": client.prenom,
             "prochaine_seance": seance_data,
@@ -282,7 +294,12 @@ class AthleteDashboardView(APIView):
             "stats_sante": {
                 "completion_jour": completion_jour, 
                 "calories": calories_brulees, 
-                "calories_max": calories_max_objectif
+                "calories_max": calories_max_objectif,
+                "pas": pas_jour,                               # NOUVEAU
+                "hydratation": hydratation,                    # NOUVEAU
+                "sommeil": f"{sommeil_h}h {sommeil_m:02d}m",   # NOUVEAU
+                "fc_repos": fc_repos,                          # NOUVEAU
+                "recuperation": recuperation                   # NOUVEAU
             }
         })
 
