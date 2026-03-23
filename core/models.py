@@ -399,3 +399,53 @@ def notifier_suppression_indispo(sender, instance, **kwargs):
         type='ANNULATION', 
         message=f"{type_event} '{instance.titre}' a été annulé(e) / supprimé(e)."
     )
+    
+# --------------------------------------------------------
+# MESSAGERIE INTERNE
+# --------------------------------------------------------
+
+class Conversation(models.Model):
+    CONVERSATION_TYPES = [
+        ('direct', 'Directe'),
+        ('group', 'Groupe'),
+    ]
+
+    conversation_type = models.CharField(max_length=20, choices=CONVERSATION_TYPES, default='direct')
+    title = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_conversations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+
+    def __str__(self):
+        if self.conversation_type == 'group':
+            return self.title or f"Groupe #{self.id}"
+        return f"Conversation directe #{self.id}"
+
+
+class ConversationParticipant(models.Model):
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='participants')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_conversations')
+    joined_at = models.DateTimeField(auto_now_add=True)
+    last_read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('conversation', 'user')
+
+    def __str__(self):
+        return f"{self.user.username} dans {self.conversation}"
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Message de {self.sender.username} - Conversation #{self.conversation.id}"
