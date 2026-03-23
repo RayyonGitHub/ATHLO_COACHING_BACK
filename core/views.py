@@ -385,11 +385,8 @@ class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
     permission_classes = [IsAuthenticated]
     def perform_create(self, serializer):
-        perf = serializer.save(client=self.request.user.client_profile)
-        seance = perf.seance_exercice.seance
-        if not seance.est_completee:
-            seance.est_completee = True
-            seance.save()
+        # ON ENREGISTRE JUSTE LA SÉRIE, ON NE CLÔTURE PLUS LA SÉANCE ICI
+        serializer.save(client=self.request.user.client_profile)
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
