@@ -447,8 +447,25 @@ class IndisponibiliteViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def update_inscription_status(request, inscription_id):
     ins = get_object_or_404(Inscription, id=inscription_id)
-    ins.statut = request.data.get('statut')
-    ins.save()
+    ancien_statut = ins.statut
+    nouveau_statut = request.data.get('statut')
+    
+    # Mise à jour directe en BDD sans déclencher full_clean ni les signaux
+    Inscription.objects.filter(id=inscription_id).update(statut=nouveau_statut)
+    
+    # Recharger l'objet pour avoir les données à jour
+    ins.refresh_from_db()
+    
+    # Notification si passage liste d'attente → confirmé
+    if ancien_statut == 'ATTENTE' and nouveau_statut == 'CONFIRME':
+        client_name = f"{ins.client.prenom} {ins.client.nom}"
+        Notification.objects.create(
+            coach=ins.seance.coach,
+            seance=ins.seance,
+            message=f"{client_name} a été promu(e) de la liste d'attente et est maintenant confirmé(e) pour : {ins.seance.titre}",
+            type='INSCRIPTION'
+        )
+    
     return Response({"status": "ok"})
 
 @api_view(['DELETE'])
