@@ -3,6 +3,7 @@ from .models import (
     Coach,
     Client,
     Exercice,
+    NotificationAthlete,
     Programme,
     Seance,
     SeanceExercice,
@@ -59,3 +60,5 @@ class MessageAdmin(admin.ModelAdmin):
 class MessageAttachmentAdmin(admin.ModelAdmin):
     list_display = ('id', 'message', 'original_name', 'uploaded_at')
     search_fields = ('original_name',)
+    
+admin.site.register(NotificationAthlete)

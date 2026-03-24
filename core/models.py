@@ -150,14 +150,22 @@ class Avis(models.Model):
     date = models.DateTimeField(auto_now_add=True)
 
 class Notification(models.Model):
-    TYPES = [('INSCRIPTION', 'Inscription'), ('DESINSCRIPTION', 'Désinscription'), ('ANNULATION', 'Annulation'), ('MODIFICATION', 'Modification')]
+    TYPES = [
+        ('INSCRIPTION', 'Inscription'), 
+        ('DESINSCRIPTION', 'Désinscription'), 
+        ('ANNULATION', 'Annulation'), 
+        ('MODIFICATION', 'Modification'),
+        ('INFO', 'Information') # Optionnel: ajoute un type générique
+    ]
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
     seance = models.ForeignKey(Seance, on_delete=models.SET_NULL, null=True, blank=True) 
     message = models.TextField()
-    type = models.CharField(max_length=20, choices=TYPES)
+    
+    # AJOUTE UN DEFAULT ICI AUSSI !
+    type = models.CharField(max_length=20, choices=TYPES, default='INFO') 
+    
     est_lu = models.BooleanField(default=False)
     date_creation = models.DateTimeField(auto_now_add=True)
-    class Meta: ordering = ['-date_creation']
 
 # --- MESSAGERIE (VOTRE VERSION) ---
 class Conversation(models.Model):
