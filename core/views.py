@@ -15,7 +15,10 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import AllowAny
 from django.conf import settings
 from django.core.mail import send_mail
-
+from collections import defaultdict
+import re
+from django.db.models import Sum, F
+from django.utils.timezone import localtime
 from rest_framework import viewsets, status, generics
 from rest_framework.views import APIView 
 from rest_framework.response import Response 
@@ -35,7 +38,6 @@ from .serializers import (
     IndisponibiliteSerializer, NotificationSerializer, 
     NotificationAthleteSerializer, SalleSerializer, AvisSerializer
 )
-
 # --- 1. SÉCURITÉ & AUTH ---
 
 class ChangePasswordView(APIView):
@@ -52,7 +54,6 @@ class ChangePasswordView(APIView):
         user.save()
         update_session_auth_hash(request, user)
         return Response({"message": "Mot de passe modifié avec succès !"})
-
 class LoginView(APIView):
     permission_classes = [AllowAny]
     def post(self, request):
@@ -105,8 +106,9 @@ class CoachMeView(APIView):
 class AthleteMeView(APIView):
     permission_classes = [IsAuthenticated]
     def patch(self, request):
-        client, _ = Client.objects.get_or_create(user=request.user)
-        serializer = ClientSerializer(client, data=request.data, partial=True)
+        # Correction : Ton modèle de base est 'Client'
+        athlete_profile, _ = Client.objects.get_or_create(user=request.user)
+        serializer = ClientSerializer(athlete_profile, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
@@ -122,33 +124,169 @@ class ExerciceViewSet(viewsets.ModelViewSet):
 
 class ProgrammeViewSet(viewsets.ModelViewSet):
     serializer_class = ProgrammeSerializer
+
     def get_queryset(self):
         user = self.request.user
-        if hasattr(user, 'coach_profile'): return Programme.objects.filter(coach=user.coach_profile)
-        return Programme.objects.filter(athlete=user.client_profile)
+        if hasattr(user, 'coach_profile'): 
+            return Programme.objects.filter(coach=user.coach_profile)
+        if hasattr(user, 'client_profile'):
+            return Programme.objects.filter(athlete=user.client_profile)
+        return Programme.objects.none()
 
+    def perform_create(self, serializer):
+        # 1. Récupération du coach (indispensable)
+        coach = getattr(self.request.user, 'coach_profile', None)
+        if not coach:
+            raise ValidationError({"error": "Profil coach introuvable. Action refusée."})
+
+        # 2. Sauvegarde du programme
+        # On force le coach ici pour respecter la contrainte NOT NULL
+        programme = serializer.save(coach=coach)
+        
+        # 3. Tentative de notification (Isolée pour éviter la 500)
+        try:
+            # On récupère l'athlète lié au programme
+            athlete_obj = getattr(programme, 'athlete', None)
+            
+            if athlete_obj:
+                NotificationAthlete.objects.create(
+                    client=athlete_obj, # 🎯 CHANGEMENT ICI : 'client=' au lieu de 'athlete='
+                    message=f"Nouveau programme : {programme.titre}",
+                    type='SEANCE' 
+                )
+                print(f"✅ Notification envoyée à l'ID {athlete_obj.id}")
+        except Exception as e:
+            # Si ça plante ici, on affiche l'erreur dans le terminal
+            # MAIS l'utilisateur reçoit une réponse 201 (Succès) pour le programme
+            print(f"⚠️ Erreur notification (mais programme créé) : {e}")
 class SeanceViewSet(viewsets.ModelViewSet):
     serializer_class = SeanceSerializer
+
     def get_queryset(self):
         user = self.request.user
         if hasattr(user, 'coach_profile'):
-            return Seance.objects.filter(Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)).distinct()
-        return Seance.objects.filter(programme__athlete=user.client_profile)
+            return Seance.objects.filter(
+                Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)
+            ).distinct()
+        if hasattr(user, 'client_profile'):
+            return Seance.objects.filter(programme__athlete=user.client_profile)
+        return Seance.objects.none()
 
+    def create(self, request, *args, **kwargs):
+        print("\n=== 🕵️‍♂️ DEBUG CRÉATION SÉANCE ===")
+        print(f"1. Données reçues du Front : {request.data}")
+        
+        try:
+            # Séparation des exercices et de la séance
+            # request.data peut être un QueryDict, on s'assure de pouvoir le modifier
+            data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            exercices_data = data.pop('exercices', [])
+            
+            print(f"2. Données nettoyées pour la séance : {data}")
+            
+            serializer = self.get_serializer(data=data)
+            
+            # Si le Serializer bloque, on verra pourquoi ici !
+            if not serializer.is_valid():
+                print(f"❌ LE SERIALIZER BLOQUE : {serializer.errors}")
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            print("3. Serializer valide. Sauvegarde en cours...")
+            self.perform_create(serializer)
+            seance_creee = serializer.instance
+            print(f"✅ Séance créée (ID: {seance_creee.id})")
+
+            # Création des exercices
+            if exercices_data:
+                print(f"4. Tentative d'ajout de {len(exercices_data)} exercices...")
+                for exo in exercices_data:
+                    SeanceExercice.objects.create(
+                        seance=seance_creee,
+                        exercice_id=exo.get('exercice_id'),
+                        series=exo.get('series', 3),
+                        repetitions=exo.get('repetitions', '10'),
+                        poids=exo.get('poids', 'Poids du corps'),
+                        repos=exo.get('repos', '60s'),
+                        ordre=exo.get('ordre', 1)
+                    )
+                print("✅ Tous les exercices ont été ajoutés !")
+
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            
+        except Exception as e:
+            import traceback
+            print("💥 CRASH FATAL :")
+            print(traceback.format_exc()) # Affiche TOUT le chemin de l'erreur
+            return Response({"erreur_interne": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def perform_create(self, serializer):
+        coach = getattr(self.request.user, 'coach_profile', None)
+        serializer.save(coach=coach)
+    @action(detail=True, methods=['get'], url_path='resume')
+    def get_resume(self, request, pk=None):
+        """Récupère le détail de ce que l'athlète a réellement fait pendant cette séance"""
+        seance = self.get_object()
+        athlete = getattr(request.user, 'client_profile', None)
+        
+        if not athlete:
+            return Response({"error": "Seul un athlète peut voir son résumé"}, status=400)
+
+        # On va chercher les perfs liées à cette séance pour cet athlète
+        # Note : On utilise 'seance_exercice__seance' car Performance pointe vers SeanceExercice
+        perfs = Performance.objects.filter(
+            client=athlete,
+            seance_exercice__seance=seance
+        ).select_related('seance_exercice__exercice')
+
+        resultats = []
+        total_volume = 0
+
+        for p in perfs:
+            # Extraction du poids (on garde ta logique robuste)
+            poids_str = str(p.poids_utilise).replace(',', '.')
+            nombres = re.findall(r"[-+]?\d*\.\d+|\d+", poids_str)
+            poids_num = float(nombres[0]) if nombres else 0.0
+            
+            vol_exo = poids_num * (p.reps_realisees or 0) * (p.series_realisees or 1)
+            total_volume += vol_exo
+
+            resultats.append({
+                "exercice": p.seance_exercice.exercice.nom,
+                "series": p.series_realisees,
+                "reps": p.reps_realisees,
+                "poids": p.poids_utilise,
+                "volume_exercice": int(vol_exo)
+            })
+
+        return Response({
+            "titre_seance": seance.titre,
+            # 🎯 ON UTILISE 'jour_prevu' ICI :
+            "date": seance.jour_prevu.strftime("%d/%m/%Y") if seance.jour_prevu else "Date libre",
+            "exercices": resultats,
+            "volume_total": int(total_volume),
+            "ressenti": seance.ressenti_client, # Petit bonus : on renvoie le ressenti
+            "notes": seance.notes_client        # et les notes si besoin
+        })   
 # --- 4. DASHBOARD & STATS (AVEC TON MOCK ET TA LOGIQUE) ---
 
 class AthleteDashboardView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        client = request.user.client_profile
+        athlete = request.user.client_profile
+        today = timezone.now().date()
+        
+        # --- 1. GESTION DE LA PROCHAINE SÉANCE ---
         prochaine_seance = Seance.objects.filter(
-            Q(programme__athlete=client) | Q(inscriptions__client=client),
+            Q(programme__athlete=athlete) | Q(inscriptions__client=athlete),
             est_completee=False
         ).order_by('jour_prevu', 'heure_debut', 'ordre').first()
 
         seance_data = None
         if prochaine_seance:
-            nb_exos = prochaine_seance.exercices_details.count()
+            # Sécurité pour éviter un crash si hasattr
+            nb_exos = prochaine_seance.exercices_details.count() if hasattr(prochaine_seance, 'exercices_details') else 0
             seance_data = {
                 "id": prochaine_seance.id,
                 "titre": prochaine_seance.titre,
@@ -156,45 +294,118 @@ class AthleteDashboardView(APIView):
                 "calories_estimees": nb_exos * 80 or 450,
             }
 
-        today = timezone.now().date()
-        random.seed(client.id + today.toordinal()) # TON MOCK INTELLIGENT
+        # --- 2. GESTION DES STATS SANTÉ & CALORIES ---
+        random.seed(athlete.id + today.toordinal()) 
         pas_jour = random.randint(4500, 12500)
         
+        # On va chercher les exercices terminés AUJOURD'HUI par CET athlète
+        perfs_du_jour = Performance.objects.filter(
+            client=athlete, 
+            date_enregistrement__date=today
+        )
+        
+        # On additionne toutes les "séries réalisées" de la journée
+        total_series_dict = perfs_du_jour.aggregate(Sum('series_realisees'))
+        total_series = total_series_dict['series_realisees__sum'] or 0
+        
+        # FORMULE MAGIQUE : Disons qu'une série d'exercices brûle en moyenne 25 calories
+        calories_brulees = total_series * 25
+        
+        calories_max = 2400
+        
+        # Calcul du pourcentage (le min() sert à bloquer le cercle à 100% max)
+        pourcentage = 0
+        if calories_max > 0:
+            pourcentage = min(int((calories_brulees / calories_max) * 100), 100)
+        
         return Response({
-            "prenom": client.prenom,
+            "prenom": athlete.user.first_name, # Ou athlete.prenom selon ton modèle
             "prochaine_seance": seance_data,
             "stats_sante": {
                 "pas": pas_jour,
-                "calories": 0,
-                "recuperation": random.randint(60, 100)
+                "calories": calories_brulees,
+                "calories_max": calories_max,
+                "completion_jour": pourcentage, # <-- LA CLÉ POUR LE CADRAN ORANGE !
+                "recuperation": random.randint(60, 100),
+                "hydratation": round(random.uniform(1.2, 2.5), 1) # Petit bonus aléatoire
             }
         })
-
 class AthleteStatsView(APIView):
     permission_classes = [IsAuthenticated]
+    
     def get(self, request):
-        client = request.user.client_profile
-        volume_data = Performance.objects.filter(client=client).annotate(day=TruncDate('date_enregistrement')).values('day').annotate(
-            total_volume=Sum(ExpressionWrapper(F('poids_utilise') * F('reps_realisees') * F('series_realisees'), output_field=FloatField()))
-        ).order_by('day')[:7]
-        
-        muscle_data = Performance.objects.filter(client=client).values(name=F('seance_exercice__exercice__categorie')).annotate(value=Sum('reps_realisees')).order_by('-value')
-        formatted_volume = [{"day": entry['day'].strftime('%a') if entry['day'] else "N/A", "volume": entry['total_volume'] or 0} for entry in volume_data]
-        
-        return Response({
-            "volume_history": formatted_volume,
-            "muscle_distribution": list(muscle_data),
-            "summary": {
-                "total_sessions": Performance.objects.filter(client=client).values('seance_exercice__seance').distinct().count(),
-                "total_reps": Performance.objects.filter(client=client).aggregate(Sum('reps_realisees'))['reps_realisees__sum'] or 0
-            }
-        })
+        print("\n=== 📊 DEBUG STATS ATHLÈTE ===")
+        try:
+            # 1. Vérification du profil
+            if not hasattr(request.user, 'client_profile'):
+                print("❌ L'utilisateur n'a pas de client_profile")
+                return Response({"error": "Profil introuvable"}, status=400)
+                
+            athlete_profile = request.user.client_profile
+            perf_qs = Performance.objects.filter(client=athlete_profile)
+            
+            # 2. Stats simples
+            total_sessions = perf_qs.values('seance_exercice__seance').distinct().count()
+            total_reps_dict = perf_qs.aggregate(Sum('reps_realisees'))
+            total_reps = total_reps_dict['reps_realisees__sum'] or 0
+            
+            # 3. CALCUL DU VOLUME SÉCURISÉ (En Python)
+            volume_par_jour = defaultdict(float)
+            total_volume_global = 0
+            
+            for perf in perf_qs:
+                # On extrait juste le nombre (ex: "20kg" -> 20.0, "Poids du corps" -> 0.0)
+                poids_str = str(perf.poids_utilise).replace(',', '.')
+                nombres = re.findall(r"[-+]?\d*\.\d+|\d+", poids_str)
+                poids_num = float(nombres[0]) if nombres else 0.0
+                
+                reps = perf.reps_realisees or 0
+                series = perf.series_realisees or 1
+                volume = poids_num * reps * series
+                
+                total_volume_global += volume
+                
+                # Pour le graphique de l'historique
+                if perf.date_enregistrement:
+                    jour = perf.date_enregistrement.strftime('%a')
+                    volume_par_jour[jour] += volume
 
+            # Formatage pour le graphique de volume
+            formatted_volume = [
+                {"day": jour, "volume": int(vol)} 
+                for jour, vol in volume_par_jour.items()
+            ]
+            
+            # 4. Répartition Musculaire
+            muscle_data = perf_qs.values(
+                name=F('seance_exercice__exercice__categorie')
+            ).annotate(value=Sum('reps_realisees')).order_by('-value')
+            
+            print(f"✅ Stats réussies : {total_sessions} sessions, {int(total_volume_global)} kg de volume")
+
+            return Response({
+                "volume_history": formatted_volume,
+                "muscle_distribution": list(muscle_data),
+                "summary": {
+                    "total_sessions": total_sessions,
+                    "total_reps": total_reps,
+                    "total_volume": int(total_volume_global) # 🎯 LA DONNÉE POUR LA CASE VIOLETTE !
+                }
+            })
+            
+        except Exception as e:
+            import traceback
+            print("💥 CRASH DANS LES STATS :")
+            print(traceback.format_exc())
+            return Response({"erreur": str(e)}, status=500)
 # --- 5. NOTIFICATIONS ---
-
 class NotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationSerializer
-    def get_queryset(self): return Notification.objects.filter(coach=self.request.user.coach_profile)
+    def get_queryset(self): 
+        # On s'assure que le coach ne voit que ses propres alertes
+        if hasattr(self.request.user, 'coach_profile'):
+            return Notification.objects.filter(coach=self.request.user.coach_profile)
+        return Notification.objects.none()
 
 class AthleteNotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationAthleteSerializer
@@ -202,18 +413,15 @@ class AthleteNotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # On vérifie si l'utilisateur a bien un profil client (athlète)
         if hasattr(user, 'client_profile'):
+            # BINGO : on remet 'client=' car c'est le vrai nom en base de données !
             return NotificationAthlete.objects.filter(client=user.client_profile)
-        
-        # Si c'est un admin ou un coach sans profil athlète, on renvoie rien (0 erreur)
         return NotificationAthlete.objects.none()
 
     @action(detail=False, methods=['POST'])
     def marquer_tout_lu(self, request):
         self.get_queryset().update(est_lu=True)
         return Response({'status': 'ok'})
-
 # --- 6. AUTRES (DÉMO, CALENDRIER, ETC.) ---
 
 class DemoStatsView(APIView): # <-- CELLE QUI MANQUAIT
@@ -229,8 +437,8 @@ class CoachCalendarView(APIView):
 
 class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
-    def perform_create(self, serializer): serializer.save(client=self.request.user.client_profile)
-
+    def perform_create(self, serializer):
+        serializer.save(client=self.request.user.client_profile)
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
     serializer_class = IndisponibiliteSerializer
     def get_queryset(self): return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
