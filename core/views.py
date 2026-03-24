@@ -149,23 +149,19 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)
             ).distinct()
             
-        # --- 2. SI C'EST L'ATHLÈTE / CLIENT ---
+        # --- 2. SI C'EST L'ATHLÈTE ---
         elif hasattr(user, 'client_profile'):
             athlete = user.client_profile
-            
-            # On récupère le coach de l'athlète
             coach_associe = athlete.coach 
             
-            # Condition A : Mes propres séances (celles de mon programme OU celles où je suis déjà inscrit)
-            q_mes_seances = Q(programme__athlete=athlete) | Q(inscriptions__athlete=athlete)
+            # CORRECTION 1 : C'est 'client' et pas 'athlete' dans Inscription
+            q_mes_seances = Q(programme__athlete=athlete) | Q(inscriptions__client=athlete)
             
-            # Condition B : Toutes les séances collectives de mon coach
             q_collectives = Q(est_collective=True)
             
-            # Condition C : Les séances individuelles VIDES (zéro inscription confirmée ou en attente)
-            q_indiv_vides = Q(est_collective=False, inscriptions__isnull=True)
+            # CORRECTION 2 : On exclut les séances qui ont un programme (car elles sont privées)
+            q_indiv_vides = Q(est_collective=False, inscriptions__isnull=True, programme__isnull=True)
             
-            # On demande à Django de combiner tout ça !
             return Seance.objects.filter(
                 Q(coach=coach_associe) & 
                 (q_mes_seances | q_collectives | q_indiv_vides)
@@ -646,8 +642,8 @@ def athlete_reserver_seance(request, seance_id):
     athlete = request.user.client_profile
     seance = get_object_or_404(Seance, id=seance_id)
 
-    # 2. Sécurité : Empêcher la double inscription
-    if Inscription.objects.filter(seance=seance, athlete=athlete).exists():
+    # 2. Sécurité : Empêcher la double inscription (CORRIGÉ : client=athlete)
+    if Inscription.objects.filter(seance=seance, client=athlete).exists():
         return Response(
             {"erreur": "Vous êtes déjà inscrit ou en file d'attente pour cette séance."}, 
             status=status.HTTP_400_BAD_REQUEST
@@ -655,8 +651,6 @@ def athlete_reserver_seance(request, seance_id):
 
     # 3. Logique de capacité : Compter combien sont déjà confirmés
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
-    
-    # On récupère la capacité max (par sécurité, si non défini, on met 1)
     capacite = seance.capacite_max if seance.capacite_max else 1
     
     # 4. Déterminer si on le confirme ou si on le met en attente
@@ -667,10 +661,10 @@ def athlete_reserver_seance(request, seance_id):
         statut_final = 'ATTENTE'
         message_succes = "La séance est pleine. Vous êtes sur liste d'attente."
 
-    # 5. Créer et sauvegarder l'inscription dans la base de données
+    # 5. Créer et sauvegarder l'inscription (CORRIGÉ : client=athlete)
     inscription = Inscription.objects.create(
         seance=seance,
-        athlete=athlete,
+        client=athlete, 
         statut=statut_final
     )
 
@@ -689,7 +683,8 @@ def athlete_annuler_reservation(request, inscription_id):
         return Response({"erreur": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
     
     athlete = request.user.client_profile
-    inscription = get_object_or_404(Inscription, id=inscription_id, athlete=athlete)
+    # CORRIGÉ : client=athlete
+    inscription = get_object_or_404(Inscription, id=inscription_id, client=athlete)
     
     seance = inscription.seance
     statut_avant_annulation = inscription.statut
@@ -697,8 +692,6 @@ def athlete_annuler_reservation(request, inscription_id):
     inscription.delete()
     
     if statut_avant_annulation == 'CONFIRME':
-        # select_for_update() verrouille les lignes concernées. 
-        # Si une 2ème annulation arrive, elle patiente sagement à cette ligne.
         premier_en_attente = Inscription.objects.select_for_update().filter(
             seance=seance, 
             statut='ATTENTE'

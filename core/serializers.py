@@ -42,11 +42,14 @@ class SeanceSerializer(serializers.ModelSerializer):
     exercices_details = SeanceExerciceSerializer(many=True, read_only=True)
     volume_total = serializers.ReadOnlyField()
     
+    
     # --- NOUVEAUX CHAMPS POUR LES PARTICIPANTS ---
     participants = InscriptionDetailsSerializer(source='inscriptions', many=True, read_only=True)
     
     nombre_inscrits = serializers.SerializerMethodField()
     places_restantes = serializers.SerializerMethodField()
+    est_inscrit = serializers.SerializerMethodField()
+    mon_statut = serializers.SerializerMethodField()
 
     class Meta:
         model = Seance
@@ -71,6 +74,18 @@ class SeanceSerializer(serializers.ModelSerializer):
         if not obj.capacite_max:
             return 0
         return obj.capacite_max - self.get_nombre_inscrits(obj)
+    def get_est_inscrit(self, obj):
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'client_profile'):
+            return obj.inscriptions.filter(client=request.user.client_profile).exists()
+        return False
+
+    def get_mon_statut(self, obj):
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'client_profile'):
+            ins = obj.inscriptions.filter(client=request.user.client_profile).first()
+            return ins.statut if ins else None
+        return None
     def update(self, instance, validated_data):
         # On vérifie si on est en train de décocher la case 'est_completee'
         nouvelle_completude = validated_data.get('est_completee', instance.est_completee)
