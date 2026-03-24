@@ -142,10 +142,35 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        
+        # --- 1. SI C'EST LE COACH ---
         if hasattr(user, 'coach_profile'):
-            return Seance.objects.filter(Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)).distinct()
+            return Seance.objects.filter(
+                Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)
+            ).distinct()
+            
+        # --- 2. SI C'EST L'ATHLÈTE / CLIENT ---
         elif hasattr(user, 'client_profile'):
-            return Seance.objects.filter(programme__athlete=user.client_profile)
+            athlete = user.client_profile
+            
+            # On récupère le coach de l'athlète
+            coach_associe = athlete.coach 
+            
+            # Condition A : Mes propres séances (celles de mon programme OU celles où je suis déjà inscrit)
+            q_mes_seances = Q(programme__athlete=athlete) | Q(inscriptions__athlete=athlete)
+            
+            # Condition B : Toutes les séances collectives de mon coach
+            q_collectives = Q(est_collective=True)
+            
+            # Condition C : Les séances individuelles VIDES (zéro inscription confirmée ou en attente)
+            q_indiv_vides = Q(est_collective=False, inscriptions__isnull=True)
+            
+            # On demande à Django de combiner tout ça !
+            return Seance.objects.filter(
+                Q(coach=coach_associe) & 
+                (q_mes_seances | q_collectives | q_indiv_vides)
+            ).distinct()
+            
         return Seance.objects.none()
 
     @transaction.atomic 
@@ -209,6 +234,43 @@ class SeanceViewSet(viewsets.ModelViewSet):
         
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        # On récupère la séance qu'on veut modifier
+        instance = self.get_object()
+        data = request.data
+
+        # 1. Mise à jour des champs de base (si présents dans la requête)
+        if 'titre' in data:
+            instance.titre = data['titre']
+        if 'jour_prevu' in data:
+            instance.jour_prevu = data['jour_prevu']
+        if 'heure_debut' in data:
+            instance.heure_debut = data['heure_debut']
+        if 'heure_fin' in data:
+            instance.heure_fin = data['heure_fin']
+        
+        instance.save()
+
+        # 2. LA PARTIE CRUCIALE : Mise à jour des exercices
+        if 'exercices' in data:
+            # On supprime les anciens exercices pour éviter les doublons
+            SeanceExercice.objects.filter(seance=instance).delete()
+            
+            # On recrée les nouveaux
+            for exo_data in data['exercices']:
+                exercice = get_object_or_404(Exercice, id=exo_data.get('exercice_id'))
+                SeanceExercice.objects.create(
+                    seance=instance,
+                    exercice=exercice,
+                    series=exo_data.get('series', 3),
+                    repetitions=exo_data.get('repetitions', '10'),
+                    poids=exo_data.get('poids', 'Poids du corps'),
+                    repos=exo_data.get('repos', '60s')
+                )
+
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 
 # --- ANALYTICS ET DASHBOARD ATHLÈTE ---
 
@@ -482,7 +544,7 @@ class IndisponibiliteViewSet(viewsets.ModelViewSet):
             return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
         return Indisponibilite.objects.none()
 
-    # --- AJOUTE CE BLOC ICI ---
+
     def perform_create(self, serializer):
         # On force l'enregistrement du coach connecté
         if hasattr(self.request.user, 'coach_profile'):
@@ -571,3 +633,139 @@ class NotificationViewSet(viewsets.ModelViewSet):
         notifications = self.get_queryset().filter(est_lu=False)
         notifications.update(est_lu=True)
         return Response({'status': 'Toutes les notifications ont été marquées comme lues', 'count': notifications.count()})
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def athlete_reserver_seance(request, seance_id):
+    # 1. Vérifier que l'utilisateur est bien un profil athlète
+    if not hasattr(request.user, 'client_profile'):
+        return Response(
+            {"erreur": "Seul un profil athlète peut réserver une séance."}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    athlete = request.user.client_profile
+    seance = get_object_or_404(Seance, id=seance_id)
+
+    # 2. Sécurité : Empêcher la double inscription
+    if Inscription.objects.filter(seance=seance, athlete=athlete).exists():
+        return Response(
+            {"erreur": "Vous êtes déjà inscrit ou en file d'attente pour cette séance."}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # 3. Logique de capacité : Compter combien sont déjà confirmés
+    inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
+    
+    # On récupère la capacité max (par sécurité, si non défini, on met 1)
+    capacite = seance.capacite_max if seance.capacite_max else 1
+    
+    # 4. Déterminer si on le confirme ou si on le met en attente
+    if inscrits_confirmes < capacite:
+        statut_final = 'CONFIRME'
+        message_succes = "Inscription confirmée avec succès !"
+    else:
+        statut_final = 'ATTENTE'
+        message_succes = "La séance est pleine. Vous êtes sur liste d'attente."
+
+    # 5. Créer et sauvegarder l'inscription dans la base de données
+    inscription = Inscription.objects.create(
+        seance=seance,
+        athlete=athlete,
+        statut=statut_final
+    )
+
+    # 6. Renvoyer la bonne nouvelle au Front-end React
+    return Response({
+        "message": message_succes,
+        "statut": statut_final,
+        "inscription_id": inscription.id
+    }, status=status.HTTP_201_CREATED)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+@transaction.atomic 
+def athlete_annuler_reservation(request, inscription_id):
+    if not hasattr(request.user, 'client_profile'):
+        return Response({"erreur": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
+    
+    athlete = request.user.client_profile
+    inscription = get_object_or_404(Inscription, id=inscription_id, athlete=athlete)
+    
+    seance = inscription.seance
+    statut_avant_annulation = inscription.statut
+    
+    inscription.delete()
+    
+    if statut_avant_annulation == 'CONFIRME':
+        # select_for_update() verrouille les lignes concernées. 
+        # Si une 2ème annulation arrive, elle patiente sagement à cette ligne.
+        premier_en_attente = Inscription.objects.select_for_update().filter(
+            seance=seance, 
+            statut='ATTENTE'
+        ).order_by('id').first()
+        
+        if premier_en_attente:
+            premier_en_attente.statut = 'CONFIRME'
+            premier_en_attente.save()
+
+    return Response(
+        {"message": "Votre réservation a été annulée."}, 
+        status=status.HTTP_204_NO_CONTENT
+    )
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def export_athlete_calendar(request, athlete_id):
+    
+    # 1. On récupère toutes les inscriptions confirmées de cet athlète
+    inscriptions = Inscription.objects.filter(
+        athlete__id=athlete_id, 
+        statut='CONFIRME'
+    ).select_related('seance')
+
+    # 2. On prépare l'en-tête du fichier ICS
+    ical_content = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Athlo//Calendrier Athlete//FR",
+        "CALSCALE:GREGORIAN",
+    ]
+
+    # 3. On boucle sur chaque séance pour créer un "événement"
+    for ins in inscriptions:
+        seance = ins.seance
+        
+        # On s'assure qu'il y a bien une date et une heure
+        if seance.jour_prevu and seance.heure_debut:
+            # Formatage spécial exigé par iCalendar (ex: 20260324T083000)
+            dt_start = datetime.datetime.combine(seance.jour_prevu, seance.heure_debut)
+            dt_start_str = dt_start.strftime('%Y%m%dT%H%M%S')
+            
+            # Gestion de l'heure de fin (si absente, on met +1 heure par défaut)
+            if seance.heure_fin:
+                dt_end = datetime.datetime.combine(seance.jour_prevu, seance.heure_fin)
+            else:
+                dt_end = dt_start + datetime.timedelta(hours=1)
+            
+            dt_end_str = dt_end.strftime('%Y%m%dT%H%M%S')
+
+            # Ajout du bloc événement
+            ical_content.extend([
+                "BEGIN:VEVENT",
+                f"UID:seance-{seance.id}-athlete-{athlete_id}@ton-app.com",
+                f"DTSTAMP:{datetime.datetime.now().strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTSTART;TZID=Europe/Paris:{dt_start_str}",
+                f"DTEND;TZID=Europe/Paris:{dt_end_str}",
+                f"SUMMARY:{seance.titre}",
+                f"DESCRIPTION:Séance réservée via l'application.",
+                "END:VEVENT"
+            ])
+
+    # 4. On ferme le calendrier
+    ical_content.append("END:VCALENDAR")
+    
+    # 5. On renvoie le tout avec le bon type de fichier (text/calendar)
+    fichier_texte = "\r\n".join(ical_content)
+    response = HttpResponse(fichier_texte, content_type="text/calendar")
+    response['Content-Disposition'] = f'attachment; filename="mes_entrainements_{athlete_id}.ics"'
+    
+    return response
