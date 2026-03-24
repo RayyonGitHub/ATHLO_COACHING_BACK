@@ -500,15 +500,42 @@ class CoachCalendarView(APIView):
         for s in seances:
             inscriptions = s.inscriptions.all()
             
-            # --- Ta logique de nom d'athlète (restaurée) ---
+            # --- Formatage du nom pour l'affichage rapide sur la carte ---
             if s.est_collective:
                 noms = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions]
                 client_display = ", ".join(noms) if noms else "Aucun inscrit"
             else:
-                athlete = s.programme.athlete if s.programme else None
+                # S'il y a un athlète assigné au programme, on l'affiche, sinon on cherche une inscription
+                athlete_explicite = inscriptions.first().client if inscriptions.exists() else None
+                athlete = athlete_explicite or (s.programme.athlete if s.programme else None)
                 client_display = f"{athlete.prenom} {athlete.nom.upper()}" if athlete else "En attente"
 
-            # --- Formatage pour FullCalendar (indispensable) ---
+            # --- Création de la liste réelle des participants ---
+            participants_data = [
+                {
+                    "id": ins.id,
+                    "client_id": ins.client.id,
+                    "client_name": f"{ins.client.prenom} {ins.client.nom}",
+                    "statut": ins.statut,
+                    "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
+                } for ins in inscriptions
+            ]
+            # Si c'est une séance individuelle de Programme, on injecte l'athlète comme "CONFIRMÉ"
+            if not s.est_collective and s.programme and s.programme.athlete:
+                # On s'assure qu'il n'est pas déjà dans la liste pour éviter les doublons
+                if not any(p['client_id'] == s.programme.athlete.id for p in participants_data):
+                    participants_data.append({
+                        "id": f"prog-{s.programme.athlete.id}",
+                        "client_id": s.programme.athlete.id,
+                        "client_name": f"{s.programme.athlete.prenom} {s.programme.athlete.nom}",
+                        "statut": "CONFIRME",
+                        "date_inscription": str(s.jour_prevu) if s.jour_prevu else None
+                    })
+
+            # On recalcule le vrai nombre d'inscrits en se basant sur notre liste corrigée
+            vrai_nb_inscrits = len([p for p in participants_data if p['statut'] == 'CONFIRME'])
+
+            # --- Formatage pour FullCalendar ---
             start_dt = f"{s.jour_prevu}T{s.heure_debut}" if s.heure_debut else str(s.jour_prevu)
             end_dt = f"{s.jour_prevu}T{s.heure_fin}" if s.heure_fin else start_dt
 
@@ -524,18 +551,11 @@ class CoachCalendarView(APIView):
                 "completed": s.est_completee,
                 "est_completee": s.est_completee,
                 "capacite_max": s.capacite_max,
-                "nombre_inscrits": inscriptions.filter(statut='CONFIRME').count(),
+                "nombre_inscrits": vrai_nb_inscrits,  # <-- On utilise le vrai nombre
                 "type": "collective" if s.est_collective else "individuelle",
-                "participants": [
-                    {
-                        "id": ins.id,
-                        "client_id": ins.client.id,
-                        "client_name": f"{ins.client.prenom} {ins.client.nom}",
-                        "statut": ins.statut,
-                        "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
-                    } for ins in inscriptions
-                ]
+                "participants": participants_data     # <-- On utilise la liste enrichie
             })
+            
         return Response(data)
 
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
