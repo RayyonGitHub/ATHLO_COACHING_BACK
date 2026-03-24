@@ -430,10 +430,154 @@ class DemoStatsView(APIView): # <-- CELLE QUI MANQUAIT
         return Response({"total_exercices": Exercice.objects.count(), "total_coachs": Coach.objects.count()})
 
 class CoachAnalyticsView(APIView):
-    def get(self, request): return Response({"total_athletes": 0})
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'coach_profile'):
+            return Response({"error": "Accès réservé aux coachs."}, status=403)
+        
+        coach = request.user.coach_profile
+        today = timezone.now().date()
+        seven_days_ago = today - timedelta(days=6)
+
+        # 1. Nombre total d'athlètes (Sécurité : on filtre par le champ coach de Client)
+        total_athletes = Client.objects.filter(coach=coach).count()
+
+        # 2. Récupérer toutes les séances liées à ce coach (Directes ou via Programme)
+        seances_globales = Seance.objects.filter(
+            Q(coach=coach) | Q(programme__coach=coach)
+        ).distinct()
+
+        # 3. Filtrer sur les 7 derniers jours pour le taux de complétion
+        seances_7_jours = seances_globales.filter(
+            jour_prevu__range=[seven_days_ago, today]
+        )
+
+        total_seances = seances_7_jours.count()
+        seances_completees = seances_7_jours.filter(est_completee=True).count()
+
+        completion_rate = 0
+        if total_seances > 0:
+            completion_rate = int((seances_completees / total_seances) * 100)
+
+        # 4. Calcul du volume (Même logique que ton athlète si tu veux du vrai tonnage, 
+        # sinon ton estimation à 450 cal par séance marche pour le dashboard coach)
+        total_volume = seances_completees * 450
+
+        # 5. Données pour le graphique
+        chart_data = []
+        for i in range(7):
+            date_target = seven_days_ago + timedelta(days=i)
+            count_day = seances_7_jours.filter(
+                jour_prevu=date_target, 
+                est_completee=True
+            ).count()
+            
+            chart_data.append({
+                "day": date_target.strftime('%a'), # "Lun", "Mar"...
+                "sessions": count_day
+            })
+
+        return Response({
+            "total_athletes": total_athletes,
+            "completion_rate": completion_rate,
+            "total_volume": total_volume,  
+            "chart_data": chart_data,
+            "period": "7 derniers jours"
+        })
 
 class CoachCalendarView(APIView):
-    def get(self, request, coach_id=None): return Response([])
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, coach_id):
+        coach = get_object_or_404(Coach, id=coach_id)
+        
+        # 1. Traitement des Séances
+        seances = Seance.objects.filter(
+            coach=coach
+        ).prefetch_related('inscriptions__client')
+        
+        data = []
+        for s in seances:
+            toutes_inscriptions = s.inscriptions.all()
+            inscriptions_confirmees = s.inscriptions.filter(statut='CONFIRME')
+            nb_inscrits = inscriptions_confirmees.count()
+            participants_data = []
+            for ins in toutes_inscriptions:
+                participants_data.append({
+                    "id": ins.id,
+                    "client_name": f"{ins.client.prenom} {ins.client.nom.upper()}",
+                    "statut": ins.statut,
+                    # On convertit la date en texte si elle existe, sinon on met une date vide
+                    "date_inscription": ins.date_inscription.isoformat() if hasattr(ins, 'date_inscription') else None
+                })
+            # ---------------------------------------------------------------------------
+
+            # CAS 1 : Séance Collective (Groupe)
+            if s.est_collective:
+                noms_liste = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions_confirmees]
+                client_display = ", ".join(noms_liste) if noms_liste else "Aucun inscrit"
+                capacity_info = f"{nb_inscrits}/{s.capacite_max}"
+            
+            # CAS 2 : Séance Individuelle
+            else:
+                athlete = s.programme.athlete if s.programme else None
+                
+                if athlete:
+                    # Cas classique : l'athlète est déjà assigné au programme
+                    client_display = f"{athlete.prenom} {athlete.nom.upper()}"
+                    capacity_info = "1/1"
+                elif nb_inscrits > 0:
+                    # Cas où on a utilisé la table Inscription pour une séance individuelle
+                    first_ins = inscriptions_confirmees.first()
+                    client_display = f"{first_ins.client.prenom} {first_ins.client.nom.upper()}"
+                    capacity_info = "1/1"
+                else:
+                    # Cas : pas d'athlète sur le programme et pas d'inscription
+                    client_display = "En attente d'athlète"
+                    capacity_info = "0/1"
+
+            data.append({
+                "id": f"seance_{s.id}",       # ID unique pour React
+                "db_id": s.id,                # ID en DB si besoin d'éditer
+                "title": s.titre,
+                "start": f"{s.jour_prevu}T{s.heure_debut}" if s.heure_debut else str(s.jour_prevu),
+                "end": f"{s.jour_prevu}T{s.heure_fin}" if s.heure_fin else None,
+                "is_collective": s.est_collective,
+                "type": "collective" if s.est_collective else "individuelle",
+                "capacity_label": capacity_info,
+                "client_name": client_display,
+                "completed": s.est_completee,
+                
+                # 👇 VOILÀ CE QUI MANQUAIT POUR REACT ! 👇
+                "capacite_max": s.capacite_max if s.capacite_max else 1,
+                "nombre_inscrits": nb_inscrits,
+                "participants": participants_data
+                # 👆 --------------------------------- 👆
+            })
+            
+        # 2. Traitement des Indisponibilités
+        indispos = Indisponibilite.objects.filter(coach=coach)
+        for ind in indispos:
+            data.append({
+                "id": f"indispo_{ind.id}",
+                "db_id": ind.id,
+                "title": ind.titre,
+                "start": f"{ind.jour_prevu}T{ind.heure_debut}",
+                "end": f"{ind.jour_prevu}T{ind.heure_fin}",
+                "is_collective": False,
+                "type": "conge" if ind.est_conge else "indisponibilite",
+                "capacity_label": "",
+                "client_name": "",
+                "completed": False,
+                
+                # On met des valeurs vides pour que React ne crashe pas
+                "capacite_max": 1,
+                "nombre_inscrits": 0,
+                "participants": []
+            })
+        
+        return Response(data)
 
 class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
@@ -441,8 +585,70 @@ class PerformanceCreateView(generics.CreateAPIView):
         serializer.save(client=self.request.user.client_profile)
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
     serializer_class = IndisponibiliteSerializer
-    def get_queryset(self): return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        # Un coach ne voit/gère que ses propres indisponibilités
+        if hasattr(self.request.user, 'coach_profile'):
+            return Indisponibilite.objects.filter(coach=self.request.user.coach_profile)
+        return Indisponibilite.objects.none()
+
+    def perform_create(self, serializer):
+        # On assigne automatiquement le coach connecté
+        if hasattr(self.request.user, 'coach_profile'):
+            serializer.save(coach=self.request.user.coach_profile)
+        else:
+            raise PermissionDenied("Seuls les coachs peuvent créer des indisponibilités.")
+        
+
+@api_view(['GET'])
+@permission_classes([AllowAny]) # Google Calendar n'a pas de token de connexion, il faut que l'URL soit lisible
+def export_coach_calendar(request, coach_id):
+    coach = get_object_or_404(Coach, id=coach_id)
+    cal = Calendar()
+    
+    # Méta-données du calendrier
+    cal.add('prodid', '-//Agenda Athlo Coach//athlo.com//')
+    cal.add('version', '2.0')
+    cal.add('calscale', 'GREGORIAN')
+    cal.add('x-wr-calname', f'Agenda Athlo - {coach.user.first_name}') # Nom du calendrier dans Google
+
+    # 1. On injecte toutes les Séances
+    seances = Seance.objects.filter(coach=coach)
+    for seance in seances:
+        event = Event()
+        event.add('summary', seance.titre if seance.titre else 'Séance de coaching')
+        
+        # On fusionne le jour et l'heure pour créer un vrai DateTime
+        dt_start = datetime.datetime.combine(seance.jour_prevu, seance.heure_debut)
+        dt_end = datetime.datetime.combine(seance.jour_prevu, seance.heure_fin)
+        
+        event.add('dtstart', dt_start)
+        event.add('dtend', dt_end)
+        event.add('description', 'Séance Collective' if seance.est_collective else 'Séance Individuelle')
+        
+        cal.add_component(event)
+
+    # 2. On injecte toutes les Indisponibilités
+    indispos = Indisponibilite.objects.filter(coach=coach)
+    for indispo in indispos:
+        event = Event()
+        event.add('summary', indispo.titre if indispo.titre else 'Indisponible')
+        
+        dt_start = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_debut)
+        dt_end = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_fin)
+        
+        event.add('dtstart', dt_start)
+        event.add('dtend', dt_end)
+        event.add('description', 'Congé' if indispo.est_conge else 'Indisponibilité')
+        
+        cal.add_component(event)
+
+    # On renvoie le tout sous forme de fichier téléchargeable (.ics)
+    response = HttpResponse(cal.to_ical(), content_type="text/calendar")
+    response['Content-Disposition'] = f'attachment; filename="athlo_agenda_{coach_id}.ics"'
+    
+    return response
 @api_view(['PATCH'])
 def update_inscription_status(request, inscription_id): return Response({"status": "ok"})
 
