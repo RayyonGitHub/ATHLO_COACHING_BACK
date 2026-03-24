@@ -7,7 +7,6 @@ from django.dispatch import receiver
 from django.core.validators import FileExtensionValidator
 
 # --- Validateurs ---
-
 def validate_non_negatif(value):
     if value <= 0:
         raise ValidationError("Cette valeur doit être supérieure à 0.")
@@ -17,7 +16,6 @@ def validate_date_pas_dans_le_futur(value):
         raise ValidationError("La date de naissance ne peut pas être dans le futur.")
 
 # --- Modèles Profils ---
-
 class Coach(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='coach_profile')
     telephone = models.CharField(max_length=15, verbose_name="Téléphone", blank=True)
@@ -30,9 +28,7 @@ class Coach(models.Model):
         return f"{self.user.username} - Coach"
 
 class Client(models.Model):
-    # --- NOUVEAUX CHOIX ---
     GENRE_CHOICES = [('M', 'Homme'), ('F', 'Femme'), ('O', 'Autre')]
-    
     ACTIVITE_CHOICES = [
         ('1.2', 'Sédentaire (Bureau, peu de sport)'),
         ('1.375', 'Légèrement actif (Sport 1-3 j/semaine)'),
@@ -44,27 +40,21 @@ class Client(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='client_profile')
     onboarding_data = models.JSONField(default=dict, blank=True)
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='clients', null=True, blank=True)
-    
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
     telephone = models.CharField(max_length=20, blank=True)
     date_naissance = models.DateField(null=True, blank=True, validators=[validate_date_pas_dans_le_futur])
     age = models.PositiveIntegerField(null=True, blank=True)
-    
     taille = models.PositiveIntegerField(null=True, blank=True, validators=[validate_non_negatif], help_text="Taille en cm")
     poids = models.FloatField(null=True, blank=True, validators=[validate_non_negatif], help_text="Poids en kg")
-
-    # --- NOUVEAUX CHAMPS DE PROFIL ---
     genre = models.CharField(max_length=1, choices=GENRE_CHOICES, default='M')
     niveau_activite = models.CharField(max_length=10, choices=ACTIVITE_CHOICES, default='1.55')
     poids_cible = models.FloatField(null=True, blank=True, help_text="Poids visé par l'athlète")
     type_entrainement = models.CharField(max_length=50, default='Musculation', help_text="Ex: Force, Cardio, Crossfit")
     notifications_activees = models.BooleanField(default=True, verbose_name="Notifications par mail")
-
     objectifs_sportifs = models.TextField(blank=True, help_text="Objectif du client")
     pathologies_blessures = models.TextField(blank=True, help_text="Historique médical")
-    
     consentement_rgpd = models.BooleanField(default=False, verbose_name="Consentement RGPD")
     est_archive = models.BooleanField(default=False, verbose_name="Archivé")
     tags = models.CharField(max_length=50, default="Standard", blank=True)
@@ -74,24 +64,15 @@ class Client(models.Model):
         return f"{self.prenom} {self.nom}"
 
 # --- Sport & Séances ---
-
 class Exercice(models.Model):
-    CATEGORIES = [
-        ('FORCE', 'Force & Musculation'),
-        ('CARDIO', 'Cardio & Endurance'),
-        ('SOUPLESSE', 'Souplesse & Mobilité'),
-        ('ALTERO', 'Haltérophilie'),
-        ('GYM', 'Gymnastique / Poids de corps')
-    ]
+    CATEGORIES = [('FORCE', 'Force & Musculation'), ('CARDIO', 'Cardio & Endurance'), ('SOUPLESSE', 'Souplesse & Mobilité'), ('ALTERO', 'Haltérophilie'), ('GYM', 'Gymnastique / Poids de corps')]
     nom = models.CharField(max_length=150, unique=True, verbose_name="Nom de l'exercice")
     description = models.TextField(blank=True, verbose_name="Description et consignes")
     categorie = models.CharField(max_length=20, choices=CATEGORIES, default='FORCE')
     muscle_principal = models.CharField(max_length=100, blank=True, help_text="Ex: Pectoraux, Quadriceps...")
     video_url = models.URLField(blank=True, null=True, help_text="Lien YouTube ou démo")
     date_creation = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"{self.nom} ({self.get_categorie_display()})"
+    def __str__(self): return f"{self.nom} ({self.get_categorie_display()})"
 
 class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
@@ -101,14 +82,11 @@ class Programme(models.Model):
     date_debut = models.DateField(null=True, blank=True)
     date_fin = models.DateField(null=True, blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        nom_athlete = f"{self.athlete.prenom} {self.athlete.nom}" if self.athlete else "Aucun"
-        return f"{self.titre} (Coach: {self.coach.user.username} -> Athlète: {nom_athlete})"
+    def __str__(self): return self.titre
 
 class Seance(models.Model):
-    coach = models.ForeignKey('Coach', on_delete=models.CASCADE, related_name='seances_creees')
-    programme = models.ForeignKey('Programme', on_delete=models.CASCADE, related_name='seances', null=True, blank=True)
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='seances_creees')
+    programme = models.ForeignKey(Programme, on_delete=models.CASCADE, related_name='seances', null=True, blank=True)
     titre = models.CharField(max_length=150, verbose_name="Titre de la séance")
     jour_prevu = models.DateField(null=True, blank=True)
     heure_debut = models.TimeField(null=True, blank=True) 
@@ -120,12 +98,7 @@ class Seance(models.Model):
     commentaire_coach = models.TextField(blank=True)
     ressenti_client = models.PositiveIntegerField(null=True, blank=True)
     notes_client = models.TextField(blank=True)
-
-    class Meta:
-        ordering = ['jour_prevu', 'heure_debut', 'ordre']
-
-    def __str__(self):
-        return f"{self.jour_prevu} - {self.titre}"
+    class Meta: ordering = ['jour_prevu', 'heure_debut', 'ordre']
 
 class SeanceExercice(models.Model):
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='exercices_details')
@@ -135,9 +108,7 @@ class SeanceExercice(models.Model):
     poids = models.CharField(max_length=50, blank=True, null=True)
     repos = models.CharField(max_length=50, default="60s")
     ordre = models.PositiveIntegerField(default=1)
-
-    class Meta:
-        ordering = ['ordre']
+    class Meta: ordering = ['ordre']
 
 class Performance(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='performances')
@@ -151,12 +122,10 @@ class Performance(models.Model):
 class Inscription(models.Model):
     STATUT_CHOICES = [('CONFIRME', 'Confirmé'), ('ATTENTE', 'Liste d\'attente'), ('ANNULE', 'Annulé'), ('PRESENT', 'Présent'), ('ABSENT', 'Absent')]
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='inscriptions')
-    client = models.ForeignKey('Client', on_delete=models.CASCADE)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='CONFIRME')
     date_inscription = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('seance', 'client')
+    class Meta: unique_together = ('seance', 'client')
 
 class Indisponibilite(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='indisponibilites')
@@ -182,18 +151,15 @@ class Avis(models.Model):
 
 class Notification(models.Model):
     TYPES = [('INSCRIPTION', 'Inscription'), ('DESINSCRIPTION', 'Désinscription'), ('ANNULATION', 'Annulation'), ('MODIFICATION', 'Modification')]
-    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='notifications')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
     seance = models.ForeignKey(Seance, on_delete=models.SET_NULL, null=True, blank=True) 
     message = models.TextField()
     type = models.CharField(max_length=20, choices=TYPES)
     est_lu = models.BooleanField(default=False)
     date_creation = models.DateTimeField(auto_now_add=True)
+    class Meta: ordering = ['-date_creation']
 
-    class Meta:
-        ordering = ['-date_creation']
-
-# --- MESSAGERIE INTERNE (VERSION UNIQUE PROPRE) ---
-
+# --- MESSAGERIE (VOTRE VERSION) ---
 class Conversation(models.Model):
     CONVERSATION_TYPES = [('direct', 'Directe'), ('group', 'Groupe')]
     conversation_type = models.CharField(max_length=20, choices=CONVERSATION_TYPES, default='direct')
@@ -201,21 +167,14 @@ class Conversation(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_conversations')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['-updated_at', '-created_at']
-
-    def __str__(self):
-        return self.title or f"Conversation #{self.id}"
+    class Meta: ordering = ['-updated_at', '-created_at']
 
 class ConversationParticipant(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='participants')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_conversations')
     joined_at = models.DateTimeField(auto_now_add=True)
     last_read_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        unique_together = ('conversation', 'user')
+    class Meta: unique_together = ('conversation', 'user')
 
 class Message(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
@@ -223,18 +182,35 @@ class Message(models.Model):
     content = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)
-
-    class Meta:
-        ordering = ['created_at']
+    class Meta: ordering = ['created_at']
 
 def message_attachment_upload_path(instance, filename):
     return f"messages/conversation_{instance.message.conversation.id}/{filename}"
 
 class MessageAttachment(models.Model):
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='attachments')
-    file = models.FileField(
-        upload_to=message_attachment_upload_path,
-        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'doc', 'docx', 'txt'])]
-    )
+    file = models.FileField(upload_to=message_attachment_upload_path, validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'doc', 'docx', 'txt'])])
     original_name = models.CharField(max_length=255)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+# 🔔 SEUL AJOUT : NOTIFICATION ATHLÈTE (POUR TA CLOCHE)
+class NotificationAthlete(models.Model):
+    # 1. On définit les catégories possibles
+    TYPES = [
+        ('SEANCE', 'Séance'),
+        ('RAPPEL', 'Rappel'),
+        ('OBJECTIF', 'Objectif'),
+        ('INFO', 'Information')
+    ]
+    
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='notifications_athlete', null=True, blank=True)
+    message = models.TextField()
+    
+    # 2. ON AJOUTE LE CHAMP MANQUANT ICI
+    type = models.CharField(max_length=20, choices=TYPES, default='INFO')
+    
+    est_lu = models.BooleanField(default=False)
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_creation']
