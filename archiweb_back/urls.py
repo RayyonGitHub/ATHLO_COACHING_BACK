@@ -11,6 +11,7 @@ from core.views import (
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
     PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet, NotificationViewSet,
+    ChangePasswordView # <-- AJOUTÉ
 )
 from core.views_auth import register_view, login_view
 from core.views_admin import (
@@ -44,6 +45,7 @@ urlpatterns = [
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/change-password/', ChangePasswordView.as_view(), name='change-password'), # <-- NOUVEAU
 
     # Profils utilisateur
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
