@@ -92,26 +92,66 @@ class ClientViewSet(viewsets.ModelViewSet):
 
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
+        # On récupère ou crée le profil coach
         coach, _ = Coach.objects.get_or_create(user=request.user)
         return Response(CoachSerializer(coach).data)
+
     def patch(self, request):
-        coach, _ = Coach.objects.get_or_create(user=request.user)
+        user = request.user
+        # 1. Récupérer le profil coach lié à l'utilisateur
+        coach, _ = Coach.objects.get_or_create(user=user)
+
+        # 2. Mise à jour de la table USER (Identité)
+        # On synchronise les champs first_name et last_name
+        if 'prenom' in request.data:
+            user.first_name = request.data.get('prenom')
+        if 'nom' in request.data:
+            user.last_name = request.data.get('nom')
+        if 'email' in request.data:
+            user.email = request.data.get('email')
+            user.username = request.data.get('email')
+        
+        user.save() # Crucial pour que le changement soit visible partout
+
+        # 3. Mise à jour de la table COACH (Bio, Spécialités, etc.) via le Serializer
         serializer = CoachSerializer(coach, data=request.data, partial=True)
+        
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
+        
         return Response(serializer.errors, status=400)
 
 class AthleteMeView(APIView):
     permission_classes = [IsAuthenticated]
+
     def patch(self, request):
-        # Correction : Ton modèle de base est 'Client'
-        athlete_profile, _ = Client.objects.get_or_create(user=request.user)
+        user = request.user
+        # 1. On récupère ou on crée le profil Client lié à l'utilisateur
+        athlete_profile, _ = Client.objects.get_or_create(user=user)
+
+        # 2. Mise à jour manuelle des champs de la table USER (Auth)
+        # On vérifie si les champs sont présents dans la requête avant de modifier
+        if 'prenom' in request.data:
+            user.first_name = request.data.get('prenom')
+        if 'nom' in request.data:
+            user.last_name = request.data.get('nom')
+        if 'email' in request.data:
+            user.email = request.data.get('email')
+            user.username = request.data.get('email') # Souvent le username = email
+        
+        user.save() # On enregistre les modifs dans la table User
+
+        # 3. Mise à jour des autres champs (poids, taille, bio...) via le Serializer
         serializer = ClientSerializer(athlete_profile, data=request.data, partial=True)
+        
         if serializer.is_valid():
             serializer.save()
+            # On renvoie les données mises à jour
             return Response(serializer.data)
+        
         return Response(serializer.errors, status=400)
 
 # --- 3. VUES SPORTIVES ---
