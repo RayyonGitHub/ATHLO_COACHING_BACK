@@ -245,6 +245,13 @@ class SeanceViewSet(viewsets.ModelViewSet):
             instance.heure_debut = data['heure_debut']
         if 'heure_fin' in data:
             instance.heure_fin = data['heure_fin']
+            
+        # 👇 LA LIGNE MAGIQUE QUI MANQUAIT 👇
+        if 'est_completee' in data:
+            instance.est_completee = data['est_completee']
+            # Bonus : Si on marque la séance comme complétée, on confirme les présents
+            if instance.est_completee:
+                instance.inscriptions.filter(statut__in=['PRESENT', 'ABSENT']).update(statut='CONFIRME')
         
         instance.save()
 
