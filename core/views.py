@@ -334,7 +334,10 @@ class SeanceViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            data = request.data
+            # On fait une copie modifiable des données
+            data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            # On extrait les exercices de la requête (C'EST ICI QUE LA VARIABLE EST CRÉÉE !)
+            exercices_data = data.pop('exercices', None)
             
             # 1. Capturer les anciennes valeurs AVANT modification
             ancienne_date = instance.jour_prevu
@@ -347,6 +350,23 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
             instance = serializer.save()
+            if exercices_data is not None:
+                from .models import SeanceExercice
+                
+                # On supprime les anciennes liaisons de cette séance
+                SeanceExercice.objects.filter(seance=instance).delete()
+                
+                # On recrée avec les nouvelles données
+                for exo in exercices_data:
+                    SeanceExercice.objects.create(
+                        seance=instance,
+                        exercice_id=exo.get('exercice_id'),
+                        series=exo.get('series', 3),
+                        repetitions=exo.get('repetitions', '10'),
+                        poids=exo.get('poids', 'Poids du corps'),
+                        repos=exo.get('repos', '60s'),
+                        ordre=exo.get('ordre', 1)
+                    )
             
             # Vérifier si les dates/heures ont changé
             date_ou_heure_modifiee = (ancienne_date != instance.jour_prevu) or (ancienne_heure != instance.heure_debut)
