@@ -1,4 +1,6 @@
 from rest_framework import serializers
+import datetime
+from django.utils import timezone
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
@@ -130,6 +132,22 @@ class SeanceSerializer(serializers.ModelSerializer):
             nouveau_jour = nouveau_jour or self.instance.jour_prevu
             nouvelle_heure_debut = nouvelle_heure_debut or self.instance.heure_debut
             nouvelle_heure_fin = nouvelle_heure_fin or self.instance.heure_fin
+        if nouveau_jour:
+            maintenant = maintenant = datetime.datetime.now()
+            date_aujourdhui = maintenant.date()
+            heure_actuelle = maintenant.time()
+
+            if nouveau_jour < date_aujourdhui:
+                raise serializers.ValidationError({
+                    "jour_prevu": "Vous ne pouvez pas planifier une séance à une date passée."
+                })
+            
+            # Si c'est aujourd'hui, on vérifie l'heure Bouthayna
+            if nouveau_jour == date_aujourdhui and nouvelle_heure_debut:
+                if nouvelle_heure_debut < heure_actuelle:
+                    raise serializers.ValidationError({
+                        "heure_debut": "L'heure de début ne peut pas être inférieure à l'heure actuelle."
+                    })
 
         # Si la séance n'a pas de date ou d'heure précise, on ne bloque pas
         if not (nouveau_jour and nouvelle_heure_debut and nouvelle_heure_fin):
