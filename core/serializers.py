@@ -39,17 +39,24 @@ class InscriptionDetailsSerializer(serializers.ModelSerializer):
 # Dans serializers.py
 class SeanceSerializer(serializers.ModelSerializer):
     # 1. IL FAUT DÉCLARER LES CHAMPS ICI POUR QUE LE FRONTEND LES REÇOIVE
-    nombre_inscrits = serializers.SerializerMethodField()
-    places_restantes = serializers.SerializerMethodField()
+
     exercices = serializers.SerializerMethodField()
     exercices_details = serializers.SerializerMethodField()
+    exercices_details = SeanceExerciceSerializer(many=True, read_only=True)
+    volume_total = serializers.ReadOnlyField()  
+    # --- NOUVEAUX CHAMPS POUR LES PARTICIPANTS ---
+    participants = InscriptionDetailsSerializer(source='inscriptions', many=True, read_only=True)
+    
+    nombre_inscrits = serializers.SerializerMethodField()
+    places_restantes = serializers.SerializerMethodField()
+    est_inscrit = serializers.SerializerMethodField()
+    mon_statut = serializers.SerializerMethodField()
 
     class Meta:
         model = Seance
         fields = '__all__'
         read_only_fields = ['coach']
 
-    # --- TES FONCTIONS EXISTANTES ---
     def get_nombre_inscrits(self, obj):
         # Utilisation de .all() pour éviter les erreurs si la relation n'est pas instanciée
         if not hasattr(obj, 'inscriptions'): return 0
@@ -59,13 +66,11 @@ class SeanceSerializer(serializers.ModelSerializer):
         if not obj.capacite_max: return 0
         return obj.capacite_max - self.get_nombre_inscrits(obj)
 
-    # --- LES NOUVELLES FONCTIONS POUR AFFICHER LES EXERCICES ---
     def get_exercices(self, obj):
         from .models import SeanceExercice
         # On va chercher tous les exercices liés à CETTE séance spécifique
         exos = SeanceExercice.objects.filter(seance=obj).order_by('ordre')
-        
-        # On fabrique une liste propre pour que React puisse tout lire facilement
+         # On fabrique une liste propre pour que React puisse tout lire facilement
         return [
             {
                 "id": e.id,
@@ -78,10 +83,90 @@ class SeanceSerializer(serializers.ModelSerializer):
                 "ordre": e.ordre
             } for e in exos
         ]
+    def get_est_inscrit(self, obj):
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'client_profile'):
+            return obj.inscriptions.filter(client=request.user.client_profile).exists()
+        return False
+
+    def get_mon_statut(self, obj):
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'client_profile'):
+            ins = obj.inscriptions.filter(client=request.user.client_profile).first()
+            return ins.statut if ins else None
+        return None
+    def update(self, instance, validated_data):
+        # Mise à jour simple : appliquer tous les champs validés
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
 
     # Double sécurité : certains Frontends cherchent "exercices", d'autres "exercices_details"
     def get_exercices_details(self, obj):
         return self.get_exercices(obj)
+    def validate(self, data):
+        # 1. On récupère les infos de la requête
+        request = self.context.get('request')
+        coach = None
+
+        # On identifie le coach (soit celui connecté, soit celui assigné au programme)
+        if request and hasattr(request.user, 'coach_profile'):
+            coach = request.user.coach_profile
+        elif 'programme' in data and data['programme']:
+            coach = data['programme'].coach
+
+        if not coach:
+            return data # Si pas de coach, on laisse passer (cas rare)
+
+        # 2. On récupère les nouveaux horaires
+        nouveau_jour = data.get('jour_prevu')
+        nouvelle_heure_debut = data.get('heure_debut')
+        nouvelle_heure_fin = data.get('heure_fin')
+
+        # Si l'utilisateur modifie une séance existante, il n'envoie pas forcément toutes les dates.
+        # On complète avec les anciennes données de l'instance si nécessaire.
+        if self.instance:
+            nouveau_jour = nouveau_jour or self.instance.jour_prevu
+            nouvelle_heure_debut = nouvelle_heure_debut or self.instance.heure_debut
+            nouvelle_heure_fin = nouvelle_heure_fin or self.instance.heure_fin
+
+        # Si la séance n'a pas de date ou d'heure précise, on ne bloque pas
+        if not (nouveau_jour and nouvelle_heure_debut and nouvelle_heure_fin):
+            return data
+
+        # 3. VERIFICATION N°1 : Les autres séances du coach
+        from .models import Seance, Indisponibilite # Import local pour éviter les boucles
+        seances_chevauchees = Seance.objects.filter(
+            coach=coach,
+            jour_prevu=nouveau_jour,
+            heure_debut__lt=nouvelle_heure_fin,
+            heure_fin__gt=nouvelle_heure_debut
+        )
+        
+        # Si on est en train de modifier une séance, on exclut la séance elle-même !
+        if self.instance:
+            seances_chevauchees = seances_chevauchees.exclude(id=self.instance.id)
+
+        if seances_chevauchees.exists():
+            raise serializers.ValidationError({
+                "horaire_conflit": "Vous avez déjà une autre séance prévue sur ce créneau."
+            })
+
+        # 4. VERIFICATION N°2 : Les congés et indisponibilités du coach
+        indispos_chevauchees = Indisponibilite.objects.filter(
+            coach=coach,
+            jour_prevu=nouveau_jour,
+            heure_debut__lt=nouvelle_heure_fin,
+            heure_fin__gt=nouvelle_heure_debut
+        )
+
+        if indispos_chevauchees.exists():
+            raise serializers.ValidationError({
+                "horaire_conflit": "Vous avez déclaré une indisponibilité ou un congé sur ce créneau."
+            })
+
+        return data
 
 class ProgrammeSerializer(serializers.ModelSerializer):
     # On crée deux champs personnalisés "sur mesure"
