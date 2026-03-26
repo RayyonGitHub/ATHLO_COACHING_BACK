@@ -19,22 +19,22 @@ from collections import defaultdict
 import re
 from django.utils.timezone import localtime
 from rest_framework import viewsets, status, generics
-from rest_framework.views import APIView 
-from rest_framework.response import Response 
+from rest_framework.views import APIView
+from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 # --- IMPORTS MODÈLES & SERIALIZERS ---
 from .models import (
-    Client, Coach, Exercice, Programme, Seance, 
-    SeanceExercice, Performance, Indisponibilite, 
+    Client, Coach, Exercice, Programme, Seance,
+    SeanceExercice, Performance, Indisponibilite,
     Inscription, Notification, NotificationAthlete, Salle, Avis
 )
 from .serializers import (
-    ClientSerializer, CoachSerializer, ExerciceSerializer, 
-    ProgrammeSerializer, SeanceSerializer, PerformanceSerializer, 
-    IndisponibiliteSerializer, NotificationSerializer, 
+    ClientSerializer, CoachSerializer, ExerciceSerializer,
+    ProgrammeSerializer, SeanceSerializer, PerformanceSerializer,
+    IndisponibiliteSerializer, NotificationSerializer,
     NotificationAthleteSerializer, SalleSerializer, AvisSerializer
 )
 
@@ -42,37 +42,54 @@ from .serializers import (
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request):
         user = request.user
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
+
         if not user.check_password(old_password):
             return Response({"error": "Ancien mot de passe incorrect."}, status=400)
+
         if len(new_password) < 8:
             return Response({"error": "8 caractères minimum."}, status=400)
+
         user.set_password(new_password)
         user.save()
         update_session_auth_hash(request, user)
         return Response({"message": "Mot de passe modifié avec succès !"})
 
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
-        user = authenticate(username=request.data.get("email"), password=request.data.get("password"))
-        if not user: return Response({"error": "Invalid credentials"}, status=401)
+        user = authenticate(
+            username=request.data.get("email"),
+            password=request.data.get("password")
+        )
+        if not user:
+            return Response({"error": "Invalid credentials"}, status=401)
+
         refresh = RefreshToken.for_user(user)
         role = 'coach' if hasattr(user, 'coach_profile') else 'athlete' if hasattr(user, 'client_profile') else 'prospect'
+
         return Response({
             "token": str(refresh.access_token),
-            "user": {"id": user.id, "email": user.email, "role": role}
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": role
+            }
         })
+
 
 # --- 2. GESTION DES PROFILS ---
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
     permission_classes = [IsAuthenticated]
-    
+
     def get_queryset(self):
         if hasattr(self.request.user, 'coach_profile'):
             return Client.objects.filter(coach=self.request.user.coach_profile)
@@ -81,16 +98,62 @@ class ClientViewSet(viewsets.ModelViewSet):
     def generate_password(self, length=10):
         return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
+    @transaction.atomic
     def perform_create(self, serializer):
+        """
+        Création d'un client par un coach + création du User lié
+        + envoi de l'email avec mot de passe généré.
+        Impact limité à POST /api/clients/
+        """
+        if not hasattr(self.request.user, 'coach_profile'):
+            raise PermissionDenied("Seul un coach peut ajouter un client.")
+
         coach_profile = self.request.user.coach_profile
         email = serializer.validated_data.get('email')
+        prenom = serializer.validated_data.get('prenom', '')
+        nom = serializer.validated_data.get('nom', '')
+
+        if not email:
+            raise ValidationError({"email": "L'email est obligatoire."})
+
+        if User.objects.filter(email=email).exists():
+            raise ValidationError({"email": "Un utilisateur avec cet email existe déjà."})
+
+        if User.objects.filter(username=email).exists():
+            raise ValidationError({"email": "Un utilisateur avec cet email existe déjà."})
+
         temp_password = self.generate_password()
+
         user = User.objects.create_user(
-            username=email, email=email, password=temp_password,
-            first_name=serializer.validated_data.get('prenom'),
-            last_name=serializer.validated_data.get('nom')
+            username=email,
+            email=email,
+            password=temp_password,
+            first_name=prenom,
+            last_name=nom
         )
-        serializer.save(coach=coach_profile, user=user)
+
+        client = serializer.save(coach=coach_profile, user=user)
+
+        subject = "ATHLO - Votre compte a été créé"
+        message = (
+            f"Bonjour {prenom or nom or 'Athlète'},\n\n"
+            f"Un compte ATHLO a été créé pour vous par votre coach.\n\n"
+            f"Identifiants de connexion :\n"
+            f"Email : {email}\n"
+            f"Mot de passe provisoire : {temp_password}\n\n"
+            f"Nous vous recommandons de vous connecter puis de modifier votre mot de passe.\n\n"
+            f"Connexion : http://localhost:5173/login\n\n"
+            f"L'équipe ATHLO"
+        )
+
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
+            recipient_list=[email],
+            fail_silently=False
+        )
+
 
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -110,15 +173,16 @@ class CoachMeView(APIView):
         if 'email' in request.data:
             user.email = request.data.get('email')
             user.username = request.data.get('email')
-        
-        user.save() 
+
+        user.save()
 
         serializer = CoachSerializer(coach, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        
+
         return Response(serializer.errors, status=400)
+
 
 class AthleteMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -134,21 +198,21 @@ class AthleteMeView(APIView):
         if 'email' in request.data:
             user.email = request.data.get('email')
             user.username = request.data.get('email')
-        
-        user.save() 
+
+        user.save()
 
         serializer = ClientSerializer(athlete_profile, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        
+
         return Response(serializer.errors, status=400)
+
 
 class ProspectMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Récupérer les données du prospect"""
         user = request.user
         return Response({
             'id': user.id,
@@ -159,10 +223,8 @@ class ProspectMeView(APIView):
         })
 
     def patch(self, request):
-        """Compléter le profil du prospect et devenir athlète"""
         user = request.user
-        
-        # Mettre à jour le User
+
         if 'prenom' in request.data:
             user.first_name = request.data.get('prenom')
         if 'nom' in request.data:
@@ -170,13 +232,11 @@ class ProspectMeView(APIView):
         if 'email' in request.data:
             user.email = request.data.get('email')
             user.username = request.data.get('email')
-        
+
         user.save()
-        
-        # Créer le profil Client (prospect devient athlète)
+
         athlete_profile, created = Client.objects.get_or_create(user=user)
-        
-        # Appliquer les données du profil
+
         serializer = ClientSerializer(athlete_profile, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -185,8 +245,9 @@ class ProspectMeView(APIView):
                 'athlete': serializer.data,
                 'role': 'athlete'
             })
-        
+
         return Response(serializer.errors, status=400)
+
 
 # --- 3. VUES SPORTIVES ---
 
@@ -196,13 +257,14 @@ class ExerciceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filterset_fields = ['categorie']
 
+
 class ProgrammeViewSet(viewsets.ModelViewSet):
     serializer_class = ProgrammeSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if hasattr(user, 'coach_profile'): 
+        if hasattr(user, 'coach_profile'):
             return Programme.objects.filter(coach=user.coach_profile)
         if hasattr(user, 'client_profile'):
             return Programme.objects.filter(athlete=user.client_profile)
@@ -214,17 +276,18 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
             raise ValidationError({"error": "Profil coach introuvable. Action refusée."})
 
         programme = serializer.save(coach=coach)
-        
+
         try:
             athlete_obj = getattr(programme, 'athlete', None)
             if athlete_obj:
                 NotificationAthlete.objects.create(
-                    client=athlete_obj, 
+                    client=athlete_obj,
                     message=f"Nouveau programme : {programme.titre}",
-                    type='SEANCE' 
+                    type='SEANCE'
                 )
         except Exception as e:
             print(f"⚠️ Erreur notification (mais programme créé) : {e}")
+
 
 class SeanceViewSet(viewsets.ModelViewSet):
     serializer_class = SeanceSerializer
@@ -232,39 +295,37 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        
-        # --- 1. SI C'EST LE COACH ---
+
         if hasattr(user, 'coach_profile'):
             return Seance.objects.filter(
                 Q(coach=user.coach_profile) | Q(programme__coach=user.coach_profile)
             ).distinct()
-            
-        # --- 2. SI C'EST L'ATHLÈTE ---
+
         if hasattr(user, 'client_profile'):
             athlete = user.client_profile
-            coach_associe = athlete.coach 
-            
+            coach_associe = athlete.coach
+
             q_mes_seances = Q(programme__athlete=athlete) | Q(inscriptions__client=athlete)
             q_collectives = Q(est_collective=True)
             q_indiv_vides = Q(est_collective=False, inscriptions__isnull=True, programme__isnull=True)
-            
+
             return Seance.objects.filter(
-                Q(coach=coach_associe) & 
+                Q(coach=coach_associe) &
                 (q_mes_seances | q_collectives | q_indiv_vides)
             ).distinct()
-            
+
         return Seance.objects.none()
 
     def create(self, request, *args, **kwargs):
         try:
             data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
             exercices_data = data.pop('exercices', [])
-            
+
             serializer = self.get_serializer(data=data)
-            
+
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
+
             self.perform_create(serializer)
             seance_creee = serializer.instance
 
@@ -280,16 +341,15 @@ class SeanceViewSet(viewsets.ModelViewSet):
                         ordre=exo.get('ordre', 1)
                     )
 
-            # 🔔 CRÉER UNE NOTIFICATION POUR L'ATHLÈTE SI UNE SÉANCE EST ASSIGNÉE À UN PROGRAMME
             if seance_creee.programme and seance_creee.programme.athlete:
                 athlete = seance_creee.programme.athlete
                 jour_str = seance_creee.jour_prevu.strftime('%d/%m/%Y') if seance_creee.jour_prevu else 'à planifier'
                 heure_str = seance_creee.heure_debut.strftime('%H:%M') if seance_creee.heure_debut else ''
-                
+
                 message = f"Nouvelle séance : {seance_creee.titre} le {jour_str}"
                 if heure_str:
                     message += f" à {heure_str}"
-                
+
                 NotificationAthlete.objects.create(
                     client=athlete,
                     message=message,
@@ -298,20 +358,19 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
             headers = self.get_success_headers(serializer.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-            
+
         except Exception as e:
             import traceback
-            print(traceback.format_exc()) 
+            print(traceback.format_exc())
             return Response({"erreur_interne": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def perform_create(self, serializer):
         coach = getattr(self.request.user, 'coach_profile', None)
         serializer.save(coach=coach)
-        
+
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        
-        # 🔔 NOTIFIER L'ATHLÈTE SI LA SÉANCE EST SUPPRIMÉE
+
         if instance.programme and instance.programme.athlete:
             athlete = instance.programme.athlete
             NotificationAthlete.objects.create(
@@ -319,7 +378,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 message=f"Suppression : La séance '{instance.titre}' a été annulée.",
                 type='SEANCE'
             )
-        
+
         instance.inscriptions.all().delete()
         Notification.objects.create(
             coach=instance.coach,
@@ -335,47 +394,42 @@ class SeanceViewSet(viewsets.ModelViewSet):
         try:
             instance = self.get_object()
             data = request.data
-            
-            # 1. Capturer les anciennes valeurs AVANT modification
+
             ancienne_date = instance.jour_prevu
             ancienne_heure = instance.heure_debut
-            etait_completee = instance.est_completee  # 👈 ON AJOUTE ÇA ICI
+            etait_completee = instance.est_completee
 
-            # Utiliser le serializer pour valider et convertir correctement les données
             serializer = self.get_serializer(instance, data=data, partial=True)
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
+
             instance = serializer.save()
-            
-            # Vérifier si les dates/heures ont changé
+
             date_ou_heure_modifiee = (ancienne_date != instance.jour_prevu) or (ancienne_heure != instance.heure_debut)
 
-            # 🔔 NOTIFIER L'ATHLÈTE SEULEMENT SI LES DATES/HEURES CHANGENT
             if date_ou_heure_modifiee and instance.programme and instance.programme.athlete:
                 athlete = instance.programme.athlete
                 jour_str = instance.jour_prevu.strftime('%d/%m/%Y') if instance.jour_prevu else 'à planifier'
                 heure_str = instance.heure_debut.strftime('%H:%M') if instance.heure_debut else ''
-                
+
                 message = f"Modification : {instance.titre} le {jour_str}"
                 if heure_str:
                     message += f" à {heure_str}"
-                
+
                 NotificationAthlete.objects.create(
                     client=athlete,
                     message=message,
                     type='SEANCE'
                 )
-            
-            # 🔔 NOTIFIER LE COACH SI LES DATES/HEURES CHANGENT
+
             if date_ou_heure_modifiee and instance.coach:
                 jour_str = instance.jour_prevu.strftime('%d/%m/%Y') if instance.jour_prevu else 'à planifier'
                 heure_str = instance.heure_debut.strftime('%H:%M') if instance.heure_debut else ''
-                
+
                 message = f"Modification horaires : {instance.titre} le {jour_str}"
                 if heure_str:
                     message += f" à {heure_str}"
-                
+
                 Notification.objects.create(
                     coach=instance.coach,
                     seance=None,
@@ -383,7 +437,6 @@ class SeanceViewSet(viewsets.ModelViewSet):
                     message=message
                 )
 
-            # 🔔 NOUVEAU : NOTIFIER LE COACH SI LA SÉANCE EST COMPLÉTÉE
             if not etait_completee and instance.est_completee and instance.coach:
                 jour_str = instance.jour_prevu.strftime('%d/%m/%Y') if instance.jour_prevu else ''
                 Notification.objects.create(
@@ -394,12 +447,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 )
 
             return Response(serializer.data)
-        
-        except Exception as e:
-            import traceback
-            print(traceback.format_exc())
-            return Response({"erreur_interne": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
         except Exception as e:
             import traceback
             print(traceback.format_exc())
@@ -409,7 +457,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
     def get_resume(self, request, pk=None):
         seance = self.get_object()
         athlete = getattr(request.user, 'client_profile', None)
-        
+
         if not athlete:
             return Response({"error": "Seul un athlète peut voir son résumé"}, status=400)
 
@@ -425,7 +473,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
             poids_str = str(p.poids_utilise).replace(',', '.')
             nombres = re.findall(r"[-+]?\d*\.\d+|\d+", poids_str)
             poids_num = float(nombres[0]) if nombres else 0.0
-            
+
             vol_exo = poids_num * (p.reps_realisees or 0) * (p.series_realisees or 1)
             total_volume += vol_exo
 
@@ -437,16 +485,15 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 "volume_exercice": int(vol_exo)
             })
 
-        # Utilisation de getattr par sécurité au cas où la base de données n'ait pas ces colonnes
         return Response({
             "titre_seance": seance.titre,
             "date": seance.jour_prevu.strftime("%d/%m/%Y") if seance.jour_prevu else "Date libre",
             "exercices": resultats,
             "volume_total": int(total_volume),
-            "ressenti": getattr(seance, 'ressenti_client', None), 
+            "ressenti": getattr(seance, 'ressenti_client', None),
             "notes": getattr(seance, 'notes_client', None)
         })
-    
+
 
 # --- 4. DASHBOARD & STATS ---
 
@@ -456,7 +503,7 @@ class AthleteDashboardView(APIView):
     def get(self, request):
         athlete = request.user.client_profile
         today = timezone.now().date()
-        
+
         prochaine_seance = Seance.objects.filter(
             Q(programme__athlete=athlete) | Q(inscriptions__client=athlete),
             est_completee=False
@@ -466,91 +513,93 @@ class AthleteDashboardView(APIView):
         if prochaine_seance:
             seance_data = SeanceSerializer(prochaine_seance, context={'request': request}).data
 
-        random.seed(athlete.id + today.toordinal()) 
+        random.seed(athlete.id + today.toordinal())
         pas_jour = random.randint(4500, 12500)
-        
+
         perfs_du_jour = Performance.objects.filter(
-            client=athlete, 
+            client=athlete,
             date_enregistrement__date=today
         )
-        
+
         total_series_dict = perfs_du_jour.aggregate(Sum('series_realisees'))
         total_series = total_series_dict['series_realisees__sum'] or 0
-        
+
         calories_brulees = total_series * 25
         calories_max = 2400
-        
+
         pourcentage = 0
         if calories_max > 0:
             pourcentage = min(int((calories_brulees / calories_max) * 100), 100)
-        
+
         return Response({
-            "prenom": athlete.user.first_name, 
+            "prenom": athlete.user.first_name,
             "prochaine_seance": seance_data,
             "stats_sante": {
                 "pas": pas_jour,
                 "calories": calories_brulees,
                 "calories_max": calories_max,
-                "completion_jour": pourcentage, 
+                "completion_jour": pourcentage,
                 "recuperation": random.randint(60, 100),
                 "hydratation": round(random.uniform(1.2, 2.5), 1)
             }
         })
 
+
 class AthleteStatsView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         try:
             if not hasattr(request.user, 'client_profile'):
                 return Response({"error": "Profil introuvable"}, status=400)
-                
+
             athlete_profile = request.user.client_profile
             perf_qs = Performance.objects.filter(client=athlete_profile)
-            
+
             total_sessions = perf_qs.values('seance_exercice__seance').distinct().count()
             total_reps_dict = perf_qs.aggregate(Sum('reps_realisees'))
             total_reps = total_reps_dict['reps_realisees__sum'] or 0
-            
+
             volume_par_jour = defaultdict(float)
             total_volume_global = 0
-            
+
             for perf in perf_qs:
                 poids_str = str(perf.poids_utilise).replace(',', '.')
                 nombres = re.findall(r"[-+]?\d*\.\d+|\d+", poids_str)
                 poids_num = float(nombres[0]) if nombres else 0.0
-                
+
                 reps = perf.reps_realisees or 0
                 series = perf.series_realisees or 1
                 volume = poids_num * reps * series
-                
+
                 total_volume_global += volume
-                
+
                 if perf.date_enregistrement:
                     jour = perf.date_enregistrement.strftime('%a')
                     volume_par_jour[jour] += volume
 
             formatted_volume = [
-                {"day": jour, "volume": int(vol)} 
+                {"day": jour, "volume": int(vol)}
                 for jour, vol in volume_par_jour.items()
             ]
-            
+
             muscle_data = perf_qs.values(
                 name=F('seance_exercice__exercice__categorie')
             ).annotate(value=Sum('reps_realisees')).order_by('-value')
-            
+
             return Response({
                 "volume_history": formatted_volume,
                 "muscle_distribution": list(muscle_data),
                 "summary": {
                     "total_sessions": total_sessions,
                     "total_reps": total_reps,
-                    "total_volume": int(total_volume_global) 
+                    "total_volume": int(total_volume_global)
                 }
             })
-            
+
         except Exception as e:
             return Response({"erreur": str(e)}, status=500)
+
 
 # --- 5. NOTIFICATIONS ---
 
@@ -559,42 +608,41 @@ class NotificationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Sécurité : Un coach ne voit QUE ses propres notifications
         if hasattr(self.request.user, 'coach_profile'):
             return Notification.objects.filter(coach=self.request.user.coach_profile)
         return Notification.objects.none()
 
     @action(detail=False, methods=['POST'])
     def marquer_tout_lu(self, request):
-        # Cette fonction sera appelée quand le coach cliquera sur "Tout marquer comme lu"
         notifications = self.get_queryset().filter(est_lu=False)
         notifications.update(est_lu=True)
-        return Response({'status': 'Toutes les notifications ont été marquées comme lues', 'count': notifications.count()})
+        return Response({
+            'status': 'Toutes les notifications ont été marquées comme lues',
+            'count': notifications.count()
+        })
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def athlete_reserver_seance(request, seance_id):
-    # 1. Vérifier que l'utilisateur est bien un profil athlète
     if not hasattr(request.user, 'client_profile'):
         return Response(
-            {"erreur": "Seul un profil athlète peut réserver une séance."}, 
+            {"erreur": "Seul un profil athlète peut réserver une séance."},
             status=status.HTTP_403_FORBIDDEN
         )
-    
+
     athlete = request.user.client_profile
     seance = get_object_or_404(Seance, id=seance_id)
 
-    # 2. Sécurité : Empêcher la double inscription (CORRIGÉ : client=athlete)
     if Inscription.objects.filter(seance=seance, client=athlete).exists():
         return Response(
-            {"erreur": "Vous êtes déjà inscrit ou en file d'attente pour cette séance."}, 
+            {"erreur": "Vous êtes déjà inscrit ou en file d'attente pour cette séance."},
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # 3. Logique de capacité : Compter combien sont déjà confirmés
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
     capacite = seance.capacite_max if seance.capacite_max else 1
-    
-    # 4. Déterminer si on le confirme ou si on le met en attente
+
     if inscrits_confirmes < capacite:
         statut_final = 'CONFIRME'
         message_succes = "Inscription confirmée avec succès !"
@@ -602,61 +650,58 @@ def athlete_reserver_seance(request, seance_id):
         statut_final = 'ATTENTE'
         message_succes = "La séance est pleine. Vous êtes sur liste d'attente."
 
-    # 5. Créer et sauvegarder l'inscription (CORRIGÉ : client=athlete)
     inscription = Inscription.objects.create(
         seance=seance,
-        client=athlete, 
+        client=athlete,
         statut=statut_final
     )
 
-    # 6. Renvoyer la bonne nouvelle au Front-end React
     return Response({
         "message": message_succes,
         "statut": statut_final,
         "inscription_id": inscription.id
     }, status=status.HTTP_201_CREATED)
 
+
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-@transaction.atomic 
+@transaction.atomic
 def athlete_annuler_reservation(request, inscription_id):
     if not hasattr(request.user, 'client_profile'):
         return Response({"erreur": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
-    
+
     athlete = request.user.client_profile
-    # CORRIGÉ : client=athlete
     inscription = get_object_or_404(Inscription, id=inscription_id, client=athlete)
-    
+
     seance = inscription.seance
     statut_avant_annulation = inscription.statut
-    
+
     inscription.delete()
-    
+
     if statut_avant_annulation == 'CONFIRME':
         premier_en_attente = Inscription.objects.select_for_update().filter(
-            seance=seance, 
+            seance=seance,
             statut='ATTENTE'
         ).order_by('id').first()
-        
+
         if premier_en_attente:
             premier_en_attente.statut = 'CONFIRME'
             premier_en_attente.save()
 
     return Response(
-        {"message": "Votre réservation a été annulée."}, 
+        {"message": "Votre réservation a été annulée."},
         status=status.HTTP_204_NO_CONTENT
     )
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def export_athlete_calendar(request, athlete_id):
-    
-    # 1. On récupère toutes les inscriptions confirmées de cet athlète
     inscriptions = Inscription.objects.filter(
-        athlete__id=athlete_id, 
+        athlete__id=athlete_id,
         statut='CONFIRME'
     ).select_related('seance')
 
-    # 2. On prépare l'en-tête du fichier ICS
     ical_content = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -664,25 +709,20 @@ def export_athlete_calendar(request, athlete_id):
         "CALSCALE:GREGORIAN",
     ]
 
-    # 3. On boucle sur chaque séance pour créer un "événement"
     for ins in inscriptions:
         seance = ins.seance
-        
-        # On s'assure qu'il y a bien une date et une heure
+
         if seance.jour_prevu and seance.heure_debut:
-            # Formatage spécial exigé par iCalendar (ex: 20260324T083000)
             dt_start = datetime.datetime.combine(seance.jour_prevu, seance.heure_debut)
             dt_start_str = dt_start.strftime('%Y%m%dT%H%M%S')
-            
-            # Gestion de l'heure de fin (si absente, on met +1 heure par défaut)
+
             if seance.heure_fin:
                 dt_end = datetime.datetime.combine(seance.jour_prevu, seance.heure_fin)
             else:
                 dt_end = dt_start + datetime.timedelta(hours=1)
-            
+
             dt_end_str = dt_end.strftime('%Y%m%dT%H%M%S')
 
-            # Ajout du bloc événement
             ical_content.extend([
                 "BEGIN:VEVENT",
                 f"UID:seance-{seance.id}-athlete-{athlete_id}@ton-app.com",
@@ -694,15 +734,14 @@ def export_athlete_calendar(request, athlete_id):
                 "END:VEVENT"
             ])
 
-    # 4. On ferme le calendrier
     ical_content.append("END:VCALENDAR")
-    
-    # 5. On renvoie le tout avec le bon type de fichier (text/calendar)
+
     fichier_texte = "\r\n".join(ical_content)
     response = HttpResponse(fichier_texte, content_type="text/calendar")
     response['Content-Disposition'] = f'attachment; filename="mes_entrainements_{athlete_id}.ics"'
-    
+
     return response
+
 
 class AthleteNotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationAthleteSerializer
@@ -719,12 +758,18 @@ class AthleteNotificationViewSet(viewsets.ModelViewSet):
         self.get_queryset().update(est_lu=True)
         return Response({'status': 'ok'})
 
+
 # --- 6. AUTRES (DÉMO, CALENDRIER, ETC.) ---
 
-class DemoStatsView(APIView): 
+class DemoStatsView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request):
-        return Response({"total_exercices": Exercice.objects.count(), "total_coachs": Coach.objects.count()})
+        return Response({
+            "total_exercices": Exercice.objects.count(),
+            "total_coachs": Coach.objects.count()
+        })
+
 
 class CoachAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -732,7 +777,7 @@ class CoachAnalyticsView(APIView):
     def get(self, request):
         if not hasattr(request.user, 'coach_profile'):
             return Response({"error": "Accès réservé aux coachs."}, status=403)
-        
+
         coach = request.user.coach_profile
         today = timezone.now().date()
         seven_days_ago = today - timedelta(days=6)
@@ -760,10 +805,10 @@ class CoachAnalyticsView(APIView):
         for i in range(7):
             date_target = seven_days_ago + timedelta(days=i)
             count_day = seances_7_jours.filter(
-                jour_prevu=date_target, 
+                jour_prevu=date_target,
                 est_completee=True
             ).count()
-            
+
             chart_data.append({
                 "day": date_target.strftime('%a'),
                 "sessions": count_day
@@ -772,10 +817,11 @@ class CoachAnalyticsView(APIView):
         return Response({
             "total_athletes": total_athletes,
             "completion_rate": completion_rate,
-            "total_volume": total_volume,  
+            "total_volume": total_volume,
             "chart_data": chart_data,
             "period": "7 derniers jours"
         })
+
 
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
@@ -785,13 +831,13 @@ class CoachCalendarView(APIView):
             coach = request.user.coach_profile
         else:
             coach = get_object_or_404(Coach, id=coach_id)
-            
+
         seances = Seance.objects.filter(coach=coach).prefetch_related('inscriptions__client')
-        
+
         data = []
         for s in seances:
             inscriptions = s.inscriptions.all()
-            
+
             if s.est_collective:
                 noms = [f"{ins.client.prenom} {ins.client.nom.upper()}" for ins in inscriptions]
                 client_display = ", ".join(noms) if noms else "Aucun inscrit"
@@ -841,8 +887,9 @@ class CoachCalendarView(APIView):
                 "type": "collective" if s.est_collective else "individuelle",
                 "participants": participants_data
             })
-            
+
         return Response(data)
+
 
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
     serializer_class = IndisponibiliteSerializer
@@ -858,89 +905,90 @@ class IndisponibiliteViewSet(viewsets.ModelViewSet):
             serializer.save(coach=self.request.user.coach_profile)
         else:
             raise PermissionDenied("Seuls les coachs peuvent créer des indisponibilités.")
+
     def perform_update(self, serializer):
-        # 1. On mémorise l'ancienne version AVANT de sauvegarder
         instance_avant = self.get_object()
         ancien_jour = instance_avant.jour_prevu
         ancienne_heure_debut = instance_avant.heure_debut
         ancienne_heure_fin = instance_avant.heure_fin
 
-        # 2. On sauvegarde les modifications en base de données
         nouvelle_indispo = serializer.save()
 
-        # 3. On vérifie si l'une des données de temps a été modifiée
         horaire_modifie = (
-            ancien_jour != nouvelle_indispo.jour_prevu or 
-            ancienne_heure_debut != nouvelle_indispo.heure_debut or 
+            ancien_jour != nouvelle_indispo.jour_prevu or
+            ancienne_heure_debut != nouvelle_indispo.heure_debut or
             ancienne_heure_fin != nouvelle_indispo.heure_fin
         )
 
-        # 4. Si l'horaire a changé, on génère la notification pour le coach
         if horaire_modifie:
             type_event = "congé" if nouvelle_indispo.est_conge else "indisponibilité"
-            
+
             Notification.objects.create(
                 coach=nouvelle_indispo.coach,
                 seance=None,
                 type='MODIFICATION',
                 message=f"L'horaire de votre {type_event} '{nouvelle_indispo.titre}' a été modifié pour le {nouvelle_indispo.jour_prevu}."
             )
+
+
 class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
     permission_classes = [IsAuthenticated]
+
     def perform_create(self, serializer):
         serializer.save(client=self.request.user.client_profile)
 
+
 @api_view(['GET'])
-@permission_classes([AllowAny]) 
+@permission_classes([AllowAny])
 def export_coach_calendar(request, coach_id):
     coach = get_object_or_404(Coach, id=coach_id)
     cal = Calendar()
-    
+
     cal.add('prodid', '-//Agenda Athlo Coach//athlo.com//')
     cal.add('version', '2.0')
     cal.add('calscale', 'GREGORIAN')
-    cal.add('x-wr-calname', f'Agenda Athlo - {coach.user.first_name}') 
+    cal.add('x-wr-calname', f'Agenda Athlo - {coach.user.first_name}')
 
-    # --- SÉANCES ---
     seances = Seance.objects.filter(coach=coach)
     for seance in seances:
         if not seance.jour_prevu or not seance.heure_debut or not seance.heure_fin:
-            continue # Si l'un des trois manque, on ignore cet événement
-            
+            continue
+
         event = Event()
         event.add('summary', seance.titre if seance.titre else 'Séance de coaching')
-        
+
         dt_start = datetime.datetime.combine(seance.jour_prevu, seance.heure_debut)
         dt_end = datetime.datetime.combine(seance.jour_prevu, seance.heure_fin)
-        
+
         event.add('dtstart', dt_start)
         event.add('dtend', dt_end)
         event.add('description', 'Séance Collective' if seance.est_collective else 'Séance Individuelle')
-        
+
         cal.add_component(event)
 
     indispos = Indisponibilite.objects.filter(coach=coach)
     for indispo in indispos:
         if not indispo.jour_prevu or not indispo.heure_debut or not indispo.heure_fin:
             continue
-            
+
         event = Event()
         event.add('summary', indispo.titre if indispo.titre else 'Indisponible')
-        
+
         dt_start = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_debut)
         dt_end = datetime.datetime.combine(indispo.jour_prevu, indispo.heure_fin)
-        
+
         event.add('dtstart', dt_start)
         event.add('dtend', dt_end)
         event.add('description', 'Congé' if indispo.est_conge else 'Indisponibilité')
-        
+
         cal.add_component(event)
 
     response = HttpResponse(cal.to_ical(), content_type="text/calendar")
     response['Content-Disposition'] = f'attachment; filename="athlo_agenda_{coach_id}.ics"'
-    
+
     return response
+
 
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
@@ -950,15 +998,17 @@ def update_inscription_status(request, inscription_id):
     nouveau_statut = request.data.get('statut')
     Inscription.objects.filter(id=inscription_id).update(statut=nouveau_statut)
     ins.refresh_from_db()
+
     if ancien_statut == 'ATTENTE' and nouveau_statut == 'CONFIRME':
         client_name = f"{ins.client.prenom} {ins.client.nom}"
         Notification.objects.create(
-            coach=ins.seance.coach, 
-            seance=ins.seance, 
-            message=f"{client_name} a été promu(e) de la liste d'attente et est maintenant confirmé(e) pour : {ins.seance.titre}", 
+            coach=ins.seance.coach,
+            seance=ins.seance,
+            message=f"{client_name} a été promu(e) de la liste d'attente et est maintenant confirmé(e) pour : {ins.seance.titre}",
             type='INSCRIPTION'
         )
     return Response({"status": "ok"})
+
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
@@ -969,10 +1019,11 @@ def remove_participant(request, inscription_id):
     seance = ins.seance
     seance_titre = ins.seance.titre
     ins.delete()
+
     Notification.objects.create(
-        coach=coach, 
-        seance=seance, 
-        message=f"{client_name} s'est désinscrit de la séance : {seance_titre}", 
+        coach=coach,
+        seance=seance,
+        message=f"{client_name} s'est désinscrit de la séance : {seance_titre}",
         type='DESINSCRIPTION'
     )
     return Response(status=204)

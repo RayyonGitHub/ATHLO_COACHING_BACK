@@ -1,4 +1,5 @@
-"""Django settings for archiweb_back project.
+"""
+Django settings for archiweb_back project.
 """
 from datetime import timedelta
 from pathlib import Path
@@ -25,18 +26,18 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django_filters',
-    
+
     # --- Applications tierces ---
-    'rest_framework',      # Pour transformer Django en API
-    'corsheaders',         # Pour autoriser les requêtes du Front (React)
-    'rest_framework_simplejwt', # Pour l'authentification JWT
-    
+    'rest_framework',
+    'corsheaders',
+    'rest_framework_simplejwt',
+
     # --- Vos applications ---
-    'core',                # Votre application principale
+    'core',
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',  # DOIT être tout en haut pour le CORS
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -44,7 +45,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    
 ]
 
 ROOT_URLCONF = 'archiweb_back.urls'
@@ -83,7 +83,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
-LANGUAGE_CODE = 'fr-fr' # Mis en français pour plus de confort
+LANGUAGE_CODE = 'fr-fr'
 TIME_ZONE = 'Europe/Paris'
 USE_I18N = True
 USE_TZ = False
@@ -94,8 +94,7 @@ STATIC_URL = 'static/'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# --- CONFIGURATION CORS (Issue #4) ---
-# En développement, on autorise le port par défaut de Vite (React)
+# --- CONFIGURATION CORS ---
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -110,14 +109,14 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'authorization',
 ]
 
-# --- CONFIGURATION REST FRAMEWORK (Issue #3) ---
+# --- CONFIGURATION REST FRAMEWORK ---
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated', # Accès sécurisé par défaut
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
 }
@@ -132,14 +131,13 @@ SIMPLE_JWT = {
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
-# Force Django à rester sur l'API après la connexion/déconnexion
+
 LOGIN_REDIRECT_URL = '/api/exercices/'
 LOGOUT_REDIRECT_URL = '/api/exercices/'
 CORS_ALLOW_ALL_ORIGINS = True
 
 # --- CONFIG EMAIL ---
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
@@ -152,3 +150,6 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 # --- MEDIA FILES (MESSAGERIE) ---
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# --- FRONTEND URL (RESET PASSWORD) ---
+FRONTEND_URL = 'http://localhost:5173'

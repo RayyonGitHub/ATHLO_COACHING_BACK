@@ -11,12 +11,17 @@ from core.views import (
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
-    PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet, 
-    NotificationViewSet, # Celui de ton collègue (Coach)
-    AthleteNotificationViewSet, # <-- TA NOUVELLE VUE (Athlète)
+    PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
+    NotificationViewSet,
+    AthleteNotificationViewSet,
     ChangePasswordView
 )
-from core.views_auth import register_view, login_view
+from core.views_auth import (
+    register_view,
+    login_view,
+    forgot_password_view,
+    reset_password_view,
+)
 from core.views_admin import (
     admin_login_view, admin_coach_list,
     admin_stats_view, admin_toggle_coach_status
@@ -40,11 +45,10 @@ router.register(r'programmes', ProgrammeViewSet, basename='programme')
 router.register(r'seances', SeanceViewSet, basename='seance')
 router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
 
-# Notifications du Coach (L'existant)
+# Notifications du Coach
 router.register(r'notifications', NotificationViewSet, basename='notification')
 
-# 🔔 TES NOTIFICATIONS (Athlète)
-# Cela créera l'URL : /api/notifications-athlete/
+# Notifications Athlète
 router.register(r'notifications-athlete', AthleteNotificationViewSet, basename='notification-athlete')
 
 urlpatterns = [
@@ -54,6 +58,8 @@ urlpatterns = [
     # Authentification Publique
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
+    path('api/auth/forgot-password/', forgot_password_view, name='forgot-password'),
+    path('api/auth/reset-password/', reset_password_view, name='reset-password'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
 
@@ -84,7 +90,6 @@ urlpatterns = [
     path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
     path('api/calendar/export/athlete/<int:athlete_id>/', views.export_athlete_calendar, name='export-athlete-calendar'),
-
 
     # Inscriptions
     path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
