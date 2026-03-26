@@ -4,9 +4,10 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
+from core import views
 
 from core.views import (
-    ClientViewSet, CoachMeView, AthleteMeView,
+    ClientViewSet, CoachMeView, AthleteMeView, ProspectMeView,
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
@@ -59,6 +60,7 @@ urlpatterns = [
     # Profils utilisateur
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
+    path('api/prospect/me/', ProspectMeView.as_view(), name='prospect-me'),
 
     # Démo & Analytics
     path('api/demo/stats/', DemoStatsView.as_view(), name='demo-stats'),
@@ -77,14 +79,18 @@ urlpatterns = [
     path('api/admin/coachs/', admin_coach_list, name='admin-coach-list'),
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 
-    # Calendrier coach
+    # Calendrier coach et athlete
     path('api/calendar/coach/<int:coach_id>/', CoachCalendarView.as_view(), name='coach-calendar'),
     path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
+    path('api/calendar/export/athlete/<int:athlete_id>/', views.export_athlete_calendar, name='export-athlete-calendar'),
+
 
     # Inscriptions
     path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
     path('api/inscriptions/<int:inscription_id>/status/', update_inscription_status, name='update-inscription-status'),
+    path('api/inscriptions/reserver/<int:seance_id>/', views.athlete_reserver_seance, name='athlete-reserver-seance'),
+    path('api/inscriptions/annuler/<int:inscription_id>/', views.athlete_annuler_reservation, name='athlete-annuler-reservation'),
 
     # Messagerie V2
     path('api/messages/contacts/', AvailableContactsView.as_view(), name='message-contacts'),
