@@ -401,6 +401,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
             # 1. Capturer les anciennes valeurs AVANT modification
             ancienne_date = instance.jour_prevu
             ancienne_heure = instance.heure_debut
+            ancienne_heure_fin = instance.heure_fin
             etait_completee = instance.est_completee
 
             serializer = self.get_serializer(instance, data=data, partial=True)
@@ -427,8 +428,11 @@ class SeanceViewSet(viewsets.ModelViewSet):
                     )
             
             # Vérifier si les dates/heures ont changé
-            date_ou_heure_modifiee = (ancienne_date != instance.jour_prevu) or (ancienne_heure != instance.heure_debut)
-
+            date_ou_heure_modifiee = (
+                ancienne_date != instance.jour_prevu or 
+                ancienne_heure != instance.heure_debut or
+                ancienne_heure_fin != instance.heure_fin 
+            )
             if date_ou_heure_modifiee and instance.programme and instance.programme.athlete:
                 athlete = instance.programme.athlete
                 jour_str = instance.jour_prevu.strftime('%d/%m/%Y') if instance.jour_prevu else 'à planifier'
