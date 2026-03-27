@@ -239,3 +239,28 @@ class NotificationAthlete(models.Model):
 
     class Meta:
         ordering = ['-date_creation']
+
+@receiver(post_save, sender=Seance)
+def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    if not instance.programme_id:
+        return
+
+    athlete = getattr(instance.programme, 'athlete', None)
+    if not athlete:
+        return
+
+    inscription, nouvelle = Inscription.objects.get_or_create(
+        seance=instance,
+        client=athlete,
+        defaults={'statut': 'CONFIRME'}
+    )
+
+    if nouvelle:
+        NotificationAthlete.objects.create(
+            client=athlete,
+            message=f"Tu as été inscrit(e) à la séance : {instance.titre}",
+            type='SEANCE'
+        )
