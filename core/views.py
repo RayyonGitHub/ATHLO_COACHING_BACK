@@ -528,17 +528,56 @@ class AthleteDashboardView(APIView):
 
     def get(self, request):
         athlete = request.user.client_profile
-        today = timezone.now().date()
+        
+        
+        # 1. Utiliser l'heure locale de la machine
+        now = datetime.datetime.now()
+        today = now.date()
+        current_time = now.time()
 
+        # --- 🧹 NETTOYAGE DES SÉANCES RATÉES ---
+        # On cherche les séances non complétées (Programme OU Confirmé)
+        seances_en_cours = Seance.objects.filter(
+            Q(programme__athlete=athlete) | Q(inscriptions__client=athlete, inscriptions__statut='CONFIRME'),
+            est_completee=False,
+            jour_prevu__isnull=False,
+            heure_fin__isnull=False
+        ).distinct()
+
+        for seance in seances_en_cours:
+            # Si le jour est passé OU (si c'est aujourd'hui ET que l'heure de fin est dépassée)
+            if seance.jour_prevu < today or (seance.jour_prevu == today and seance.heure_fin < current_time):
+                
+                # 1. Marquer l'athlète ABSENT
+                inscription, created = Inscription.objects.get_or_create(
+                    seance=seance,
+                    client=athlete,
+                    defaults={'statut': 'ABSENT'}
+                )
+                if not created and inscription.statut != 'ABSENT':
+                    inscription.statut = 'ABSENT'
+                    inscription.save()
+                
+                # 2. Si c'est une séance individuelle de son programme, on la clôture pour qu'elle disparaisse
+                if not seance.est_collective and seance.programme and seance.programme.athlete == athlete:
+                    seance.est_completee = True
+                    seance.save()
+        # ---------------------------------------------
+
+        # --- 🎯 RÉCUPÉRATION DE LA VRAIE PROCHAINE SÉANCE ---
         prochaine_seance = Seance.objects.filter(
-            Q(programme__athlete=athlete) | Q(inscriptions__client=athlete),
-            est_completee=False
+            Q(programme__athlete=athlete) | Q(inscriptions__client=athlete, inscriptions__statut='CONFIRME'),
+            est_completee=False,
+            jour_prevu__gte=today # Séances d'aujourd'hui ou futures
+        ).exclude(
+            inscriptions__client=athlete, inscriptions__statut='ABSENT' # On exclut celles ratées à l'instant
         ).order_by('jour_prevu', 'heure_debut', 'ordre').first()
 
         seance_data = None
         if prochaine_seance:
             seance_data = SeanceSerializer(prochaine_seance, context={'request': request}).data
 
+        # --- RESTE DU CODE INTACT ---
         random.seed(athlete.id + today.toordinal())
         pas_jour = random.randint(4500, 12500)
 
@@ -898,6 +937,7 @@ class CoachCalendarView(APIView):
                     "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
                 } for ins in inscriptions
             ]
+            
 
             if not s.est_collective and s.programme and s.programme.athlete:
                 if not any(p['client_id'] == s.programme.athlete.id for p in participants_data):
@@ -1070,3 +1110,27 @@ def remove_participant(request, inscription_id):
         type='DESINSCRIPTION'
     )
     return Response(status=204)
+class MarquerSeanceRateeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, seance_id):
+        print(f"--- DÉCLENCHEMENT SÉANCE RATÉE POUR L'ID {seance_id} ---")
+        
+        if not hasattr(request.user, 'client_profile'):
+            return Response({"error": "Action non autorisée"}, status=403)
+
+        athlete = request.user.client_profile
+        seance = get_object_or_404(Seance, id=seance_id)
+
+        # 1. Passer l'inscription en ABSENT
+        inscription = seance.inscriptions.filter(client=athlete).first()
+        if inscription and inscription.statut != 'ABSENT':
+            inscription.statut = 'ABSENT'
+            inscription.save()
+            print(f"  Inscription de l'athlète {athlete.id} passée en ABSENT.")
+
+        # 2. FORCE BRUTE : Mise à jour directe dans la BDD
+        Seance.objects.filter(id=seance_id).update(est_completee=True)
+        print(f" Séance {seance_id} forcée à est_completee=True dans la BDD.")
+
+        return Response({"message": "Séance marquée comme ratée et terminée."})
