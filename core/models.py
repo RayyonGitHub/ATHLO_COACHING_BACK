@@ -126,6 +126,23 @@ class Inscription(models.Model):
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='CONFIRME')
     date_inscription = models.DateTimeField(auto_now_add=True)
     class Meta: unique_together = ('seance', 'client')
+    def clean(self):
+        super().clean()
+        if self.statut in ['CONFIRME', 'PRESENT', 'ABSENT']:
+            inscrits_confirmes = Inscription.objects.filter(
+                seance=self.seance, 
+                statut__in=['CONFIRME', 'PRESENT', 'ABSENT']
+            ).exclude(pk=self.pk).count()
+            
+            if inscrits_confirmes >= self.seance.capacite_max:
+                raise ValidationError(
+                    f"La capacité maximale ({self.seance.capacite_max} participants) est atteinte. Impossible de confirmer cette inscription."
+                )
+
+    def save(self, *args, **kwargs):
+        # On force l'exécution de clean() avant chaque sauvegarde
+        self.clean()
+        super().save(*args, **kwargs)
 
 class Indisponibilite(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='indisponibilites')
