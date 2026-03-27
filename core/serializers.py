@@ -133,7 +133,10 @@ class SeanceSerializer(serializers.ModelSerializer):
             nouvelle_heure_debut = nouvelle_heure_debut or self.instance.heure_debut
             nouvelle_heure_fin = nouvelle_heure_fin or self.instance.heure_fin
         if nouveau_jour:
-            maintenant = maintenant = datetime.datetime.now()
+            from django.utils import timezone
+            
+            # timezone.localtime() force la récupération de l'heure selon le TIME_ZONE des settings (Paris)
+            maintenant = timezone.localtime() 
             date_aujourdhui = maintenant.date()
             heure_actuelle = maintenant.time()
 
