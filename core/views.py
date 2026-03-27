@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.db.models import Q, Sum, Min, Max
 
 # --- IMPORTS MODÈLES & SERIALIZERS ---
 from .models import (
@@ -595,10 +596,47 @@ class AthleteDashboardView(APIView):
         pourcentage = 0
         if calories_max > 0:
             pourcentage = min(int((calories_brulees / calories_max) * 100), 100)
+        programme_data = None
+        # On cherche le dernier programme assigné à cet athlète
+        programme_actif = Programme.objects.filter(athlete=athlete).order_by('-id').first()
 
+        if programme_actif:
+            # On récupère toutes les séances de CE programme
+            seances_prog = Seance.objects.filter(programme=programme_actif)
+            total_seances = seances_prog.count()
+            seances_terminees = seances_prog.filter(est_completee=True).count()
+
+            # 1. Calcul de la progression (%)
+            progression = int((seances_terminees / total_seances) * 100) if total_seances > 0 else 0
+
+            # 2. Calcul des semaines (basé sur les dates des séances)
+            dates = seances_prog.aggregate(debut=Min('jour_prevu'), fin=Max('jour_prevu'))
+            
+            semaine_totale = 4 # Valeur par défaut
+            semaine_actuelle = 1
+            
+            if dates['debut'] and dates['fin']:
+                # On calcule combien de semaines durent le programme
+                jours_total = (dates['fin'] - dates['debut']).days
+                semaine_totale = max(1, (jours_total // 7) + 1)
+                
+                # On calcule dans quelle semaine on est aujourd'hui
+                jours_ecoules = (today - dates['debut']).days
+                # On s'assure de ne pas dépasser la semaine totale ni d'être en dessous de 1
+                semaine_actuelle = max(1, min(semaine_totale, (jours_ecoules // 7) + 1))
+
+            programme_data = {
+                "titre": programme_actif.titre,
+                "semaine_actuelle": semaine_actuelle,
+                "semaine_totale": semaine_totale,
+                "progression": progression
+            }
+
+        
         return Response({
             "prenom": athlete.user.first_name,
             "prochaine_seance": seance_data,
+            "programme_actuel": programme_data,
             "stats_sante": {
                 "pas": pas_jour,
                 "calories": calories_brulees,
