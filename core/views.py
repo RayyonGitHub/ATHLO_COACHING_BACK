@@ -677,7 +677,24 @@ def athlete_reserver_seance(request, seance_id):
         client=athlete,
         statut=statut_final
     )
-
+     #bouthayna
+    jour_str = seance.jour_prevu.strftime('%d/%m/%Y') if seance.jour_prevu else 'date à définir'
+    
+    if statut_final == 'CONFIRME':
+        Notification.objects.create(
+            coach=seance.coach,
+            seance=seance,
+            type='INSCRIPTION',
+            message=f"Nouvel inscrit : {athlete.prenom} {athlete.nom} s'est inscrit à la séance '{seance.titre}' du {jour_str}."
+        )
+    elif statut_final == 'ATTENTE':
+        Notification.objects.create(
+            coach=seance.coach,
+            seance=seance,
+            type='INFO',
+            message=f"Liste d'attente : {athlete.prenom} {athlete.nom} s'est mis en file d'attente pour la séance '{seance.titre}' du {jour_str}."
+        )
+        #bouthayna
     return Response({
         "message": message_succes,
         "statut": statut_final,

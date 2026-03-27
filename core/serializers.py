@@ -148,7 +148,6 @@ class SeanceSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({
                         "heure_debut": "L'heure de début ne peut pas être inférieure à l'heure actuelle."
                     })
-
         # Si la séance n'a pas de date ou d'heure précise, on ne bloque pas
         if not (nouveau_jour and nouvelle_heure_debut and nouvelle_heure_fin):
             return data
