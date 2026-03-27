@@ -937,6 +937,7 @@ class CoachCalendarView(APIView):
                     "date_inscription": ins.date_inscription.isoformat() if ins.date_inscription else None,
                 } for ins in inscriptions
             ]
+            
 
             if not s.est_collective and s.programme and s.programme.athlete:
                 if not any(p['client_id'] == s.programme.athlete.id for p in participants_data):
@@ -1109,3 +1110,27 @@ def remove_participant(request, inscription_id):
         type='DESINSCRIPTION'
     )
     return Response(status=204)
+class MarquerSeanceRateeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, seance_id):
+        print(f"--- DÉCLENCHEMENT SÉANCE RATÉE POUR L'ID {seance_id} ---")
+        
+        if not hasattr(request.user, 'client_profile'):
+            return Response({"error": "Action non autorisée"}, status=403)
+
+        athlete = request.user.client_profile
+        seance = get_object_or_404(Seance, id=seance_id)
+
+        # 1. Passer l'inscription en ABSENT
+        inscription = seance.inscriptions.filter(client=athlete).first()
+        if inscription and inscription.statut != 'ABSENT':
+            inscription.statut = 'ABSENT'
+            inscription.save()
+            print(f"  Inscription de l'athlète {athlete.id} passée en ABSENT.")
+
+        # 2. FORCE BRUTE : Mise à jour directe dans la BDD
+        Seance.objects.filter(id=seance_id).update(est_completee=True)
+        print(f" Séance {seance_id} forcée à est_completee=True dans la BDD.")
+
+        return Response({"message": "Séance marquée comme ratée et terminée."})

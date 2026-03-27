@@ -14,7 +14,7 @@ from core.views import (
     PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
     NotificationViewSet,
     AthleteNotificationViewSet,
-    ChangePasswordView
+    ChangePasswordView, MarquerSeanceRateeView
 )
 from core.views_auth import (
     register_view,
@@ -75,6 +75,7 @@ urlpatterns = [
     # Dashboard Athlète
     path('api/athlete/dashboard-stats/', AthleteDashboardView.as_view(), name='athlete-dashboard-stats'),
     path('api/athlete/stats/', AthleteStatsView.as_view(), name='athlete-stats'),
+    path('seances/<int:seance_id>/ratee/', MarquerSeanceRateeView.as_view(), name='seance-ratee'),
 
     # Tracking de Performance
     path('api/athlete/performance/record/', PerformanceCreateView.as_view(), name='record-performance'),
