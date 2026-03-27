@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
 
     # --- Vos applications ---
-    'core',
+    'core.apps.CoreConfig',
 ]
 
 MIDDLEWARE = [
@@ -153,3 +153,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # --- FRONTEND URL (RESET PASSWORD) ---
 FRONTEND_URL = 'http://localhost:5173'
+
+# --- GOOGLE CALENDAR ---
+GOOGLE_CLIENT_ID = "1085275017199-gtp77vbkp5uc6llt34l32t9iploc43ts.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_REDIRECT_URI = "http://localhost:5173/auth/google/callback"
+GOOGLE_CALENDAR_SCOPES = [
+    "https://www.googleapis.com/auth/calendar"
+]

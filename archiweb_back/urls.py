@@ -36,6 +36,11 @@ from core.views_messages import (
     ConversationMessagesView,
     ConversationReadView,
 )
+from core.views_google import (
+    google_calendar_status,
+    google_calendar_connect,
+    google_calendar_disconnect,
+)
 
 # --- CONFIGURATION DU ROUTEUR ---
 router = DefaultRouter()
@@ -90,6 +95,11 @@ urlpatterns = [
     path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
     path('api/calendar/export/athlete/<int:athlete_id>/', views.export_athlete_calendar, name='export-athlete-calendar'),
+
+    # Google Calendar
+    path('api/google-calendar/status/', google_calendar_status, name='google-calendar-status'),
+    path('api/google-calendar/connect/', google_calendar_connect, name='google-calendar-connect'),
+    path('api/google-calendar/disconnect/', google_calendar_disconnect, name='google-calendar-disconnect'),
 
     # Inscriptions
     path('api/inscriptions/<int:inscription_id>/', remove_participant, name='remove-participant'),
