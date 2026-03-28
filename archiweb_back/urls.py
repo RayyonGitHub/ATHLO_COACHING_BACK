@@ -41,19 +41,20 @@ from core.views_google import (
     google_calendar_connect,
     google_calendar_disconnect,
 )
+from core.views_prospect import (
+    PublicCoachListView,
+    ProspectCheckoutPayView,
+    ProspectCheckoutPreviewView,
+    ProspectActivateAthleteView,
+)
 
-# --- CONFIGURATION DU ROUTEUR ---
 router = DefaultRouter()
 router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'exercices', ExerciceViewSet, basename='exercice')
 router.register(r'programmes', ProgrammeViewSet, basename='programme')
 router.register(r'seances', SeanceViewSet, basename='seance')
 router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
-
-# Notifications du Coach
 router.register(r'notifications', NotificationViewSet, basename='notification')
-
-# Notifications Athlète
 router.register(r'notifications-athlete', AthleteNotificationViewSet, basename='notification-athlete')
 
 urlpatterns = [
@@ -72,6 +73,12 @@ urlpatterns = [
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
     path('api/prospect/me/', ProspectMeView.as_view(), name='prospect-me'),
+
+    # Prospect / Marketplace / Paiement
+    path('api/prospects/coachs/', PublicCoachListView.as_view(), name='prospect-public-coachs'),
+    path('api/prospects/checkout/pay/', ProspectCheckoutPayView.as_view(), name='prospect-checkout-pay'),
+    path('api/prospects/checkout/preview/', ProspectCheckoutPreviewView.as_view(), name='prospect-checkout-preview'),
+    path('api/prospects/checkout/activate-athlete/', ProspectActivateAthleteView.as_view(), name='prospect-activate-athlete'),
 
     # Démo & Analytics
     path('api/demo/stats/', DemoStatsView.as_view(), name='demo-stats'),
@@ -108,7 +115,7 @@ urlpatterns = [
     path('api/inscriptions/reserver/<int:seance_id>/', views.athlete_reserver_seance, name='athlete-reserver-seance'),
     path('api/inscriptions/annuler/<int:inscription_id>/', views.athlete_annuler_reservation, name='athlete-annuler-reservation'),
 
-    # Messagerie V2
+    # Messagerie
     path('api/messages/contacts/', AvailableContactsView.as_view(), name='message-contacts'),
     path('api/messages/conversations/', ConversationListCreateView.as_view(), name='message-conversations'),
     path('api/messages/conversations/<int:conversation_id>/', ConversationDetailView.as_view(), name='message-conversation-detail'),
