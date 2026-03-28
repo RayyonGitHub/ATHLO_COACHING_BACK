@@ -249,3 +249,66 @@ class AvisSerializer(serializers.ModelSerializer):
     class Meta:
         model = Avis
         fields = '__all__'
+
+class ProspectCoachListSerializer(serializers.ModelSerializer):
+    nom = serializers.SerializerMethodField()
+    email = serializers.ReadOnlyField(source='user.email')
+    note_moyenne = serializers.SerializerMethodField()
+    nombre_avis = serializers.SerializerMethodField()
+    programmes_gratuits = serializers.SerializerMethodField()
+    distance_km = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Coach
+        fields = [
+            'id',
+            'nom',
+            'email',
+            'telephone',
+            'ville',
+            'distance_km',
+            'specialite',
+            'specialites_tags',
+            'offres_tarifs',
+            'note_moyenne',
+            'nombre_avis',
+            'programmes_gratuits',
+        ]
+
+    def get_nom(self, obj):
+        full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
+        return full_name if full_name else obj.user.username
+
+    def get_note_moyenne(self, obj):
+        avis = obj.avis.all()
+        if not avis.exists():
+            return 0
+        return round(sum(a.note for a in avis) / avis.count(), 1)
+
+    def get_nombre_avis(self, obj):
+        return obj.avis.count()
+
+    def get_programmes_gratuits(self, obj):
+        programmes = obj.programmes_crees.all()[:3]
+        return [
+            {
+                "id": p.id,
+                "titre": p.titre,
+                "description": p.description,
+            }
+            for p in programmes
+        ]
+    def get_distance_km(self, obj):
+        distance_map = self.context.get("distance_map", {})
+        d = distance_map.get(obj.id)
+
+        if d is None:
+            return None
+        return round(d, 2)
+
+
+class ProspectCoachDetailSerializer(ProspectCoachListSerializer):
+    avis = AvisSerializer(many=True, read_only=True)
+
+    class Meta(ProspectCoachListSerializer.Meta):
+        fields = ProspectCoachListSerializer.Meta.fields + ['avis']

@@ -1,6 +1,7 @@
 import random
 import string
 import datetime
+import math
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Count, Q, Sum, F, ExpressionWrapper, FloatField
@@ -36,8 +37,65 @@ from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
     ProgrammeSerializer, SeanceSerializer, PerformanceSerializer,
     IndisponibiliteSerializer, NotificationSerializer,
-    NotificationAthleteSerializer, SalleSerializer, AvisSerializer
+    NotificationAthleteSerializer, SalleSerializer, AvisSerializer,
+    ProspectCoachListSerializer, ProspectCoachDetailSerializer
 )
+
+# coordonnées villes + fonction calcul distance
+VILLE_COORDS = {
+    "Aix-en-Provence": (43.5297, 5.4474),
+    "Amiens": (49.8941, 2.2958),
+    "Angers": (47.4784, -0.5632),
+    "Annecy": (45.8992, 6.1294),
+    "Avignon": (43.9493, 4.8055),
+    "Bayonne": (43.4929, -1.4748),
+    "Belfort": (47.6386, 6.8638),
+    "Besançon": (47.2378, 6.0241),
+    "Bordeaux": (44.8378, -0.5792),
+    "Boulogne-Billancourt": (48.8397, 2.2399),
+    "Brest": (48.3904, -4.4861),
+    "Caen": (49.1829, -0.3707),
+    "Clermont-Ferrand": (45.7772, 3.0870),
+    "Dijon": (47.3220, 5.0415),
+    "Grenoble": (45.1885, 5.7245),
+    "Le Havre": (49.4944, 0.1079),
+    "Le Mans": (48.0061, 0.1996),
+    "Lille": (50.6292, 3.0573),
+    "Limoges": (45.8336, 1.2611),
+    "Lyon": (45.7640, 4.8357),
+    "Marseille": (43.2965, 5.3698),
+    "Metz": (49.1193, 6.1757),
+    "Montpellier": (43.6110, 3.8767),
+    "Mulhouse": (47.7508, 7.3359),
+    "Nancy": (48.6921, 6.1844),
+    "Nantes": (47.2184, -1.5536),
+    "Nice": (43.7102, 7.2620),
+    "Nîmes": (43.8367, 4.3601),
+    "Orléans": (47.9029, 1.9093),
+    "Paris": (48.8566, 2.3522),
+    "Perpignan": (42.6887, 2.8948),
+    "Poitiers": (46.5802, 0.3404),
+    "Reims": (49.2583, 4.0317),
+    "Rennes": (48.1173, -1.6778),
+    "Rouen": (49.4431, 1.0993),
+    "Saint-Étienne": (45.4397, 4.3872),
+    "Strasbourg": (48.5734, 7.7521),
+    "Toulon": (43.1242, 5.9280),
+    "Toulouse": (43.6047, 1.4442),
+    "Tours": (47.3941, 0.6848),
+    "Villeurbanne": (45.7660, 4.8795),
+}
+def calcul_distance(lat1, lon1, lat2, lon2):
+    R = 6371
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return R * c
 
 # --- 1. SÉCURITÉ & AUTH ---
 
@@ -1176,3 +1234,117 @@ class MarquerSeanceRateeView(APIView):
         print(f" Séance {seance_id} forcée à est_completee=True dans la BDD.")
 
         return Response({"message": "Séance marquée comme ratée et terminée."})
+
+class ProspectCoachListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        queryset = Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees').all()
+
+        ville = request.GET.get('ville')
+        specialite = request.GET.get('specialite')
+        prix_max = request.GET.get('prix_max')
+        type_offre = request.GET.get('type_offre')
+        note_min = request.GET.get('note_min')
+
+        lat = request.GET.get("lat")
+        lng = request.GET.get("lng")
+        distance_max = request.GET.get("distance_max")
+
+        if ville:
+            queryset = queryset.filter(ville__icontains=ville)
+
+        if specialite:
+            queryset = queryset.filter(
+                Q(specialite__icontains=specialite) |
+                Q(specialites_tags__icontains=specialite)
+            )
+
+        # 🔥 AJOUT DISTANCE ICI
+        distance_map = {}
+
+        if lat and lng:
+            try:
+                lat = float(lat)
+                lng = float(lng)
+
+                temp = []
+
+                for coach in queryset:
+                    coords = VILLE_COORDS.get(coach.ville)
+
+                    if coords:
+                        d = calcul_distance(lat, lng, coords[0], coords[1])
+                        distance_map[coach.id] = d
+                        temp.append((d, coach))
+                    else:
+                        distance_map[coach.id] = None
+                        temp.append((9999, coach))
+
+                # filtre distance max
+                if distance_max:
+                    try:
+                        distance_max = float(distance_max)
+                        temp = [(d, c) for d, c in temp if d <= distance_max]
+                    except:
+                        pass
+
+                temp.sort(key=lambda x: x[0])
+                queryset = [c for _, c in temp]
+
+            except:
+                return Response({"error": "lat/lng invalides"}, status=400)
+
+        # 🔽 SERIALIZATION
+        coaches_data = ProspectCoachListSerializer(queryset, many=True).data
+
+        # 🔥 AJOUTER LA DISTANCE DANS LE JSON
+        for c in coaches_data:
+            c['distance'] = distance_map.get(c['id'])
+
+        # filtres existants
+        if note_min:
+            try:
+                note_min = float(note_min)
+                coaches_data = [
+                    c for c in coaches_data
+                    if float(c['note_moyenne']) >= note_min
+                ]
+            except ValueError:
+                pass
+
+        if prix_max:
+            try:
+                prix_max = float(prix_max)
+
+                if type_offre and type_offre != 'tous':
+                    coaches_data = [
+                        c for c in coaches_data
+                        if c.get('offres_tarifs', {}).get(type_offre) is not None
+                        and float(c['offres_tarifs'][type_offre]) <= prix_max
+                    ]
+                else:
+                    coaches_data = [
+                        c for c in coaches_data
+                        if any(
+                            float(v) <= prix_max
+                            for v in c.get('offres_tarifs', {}).values()
+                            if v is not None
+                        )
+                    ]
+            except ValueError:
+                pass
+
+        return Response(coaches_data)
+
+
+class ProspectCoachDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, coach_id):
+        coach = get_object_or_404(
+            Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees'),
+            id=coach_id
+        )
+        serializer = ProspectCoachDetailSerializer(coach)
+        return Response(serializer.data)
