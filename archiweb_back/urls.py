@@ -14,7 +14,9 @@ from core.views import (
     PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
     NotificationViewSet,
     AthleteNotificationViewSet,
-    ChangePasswordView, MarquerSeanceRateeView
+    ChangePasswordView, MarquerSeanceRateeView,
+    ProspectCoachListView,
+    ProspectCoachDetailView,
 )
 from core.views_auth import (
     register_view,
@@ -116,6 +118,10 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
+
+    # Prospect - Explorer
+    path('api/prospect/coachs/', ProspectCoachListView.as_view(), name='prospect-coachs'),
+    path('api/prospect/coachs/<int:coach_id>/', ProspectCoachDetailView.as_view(), name='prospect-coach-detail'),
 ]
 
 if settings.DEBUG:
