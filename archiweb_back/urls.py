@@ -48,6 +48,7 @@ from core.views_prospect import (
     ProspectCheckoutPayView,
     ProspectCheckoutPreviewView,
     ProspectActivateAthleteView,
+    PublicSalleListView,
 )
 
 router = DefaultRouter()
@@ -126,9 +127,10 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
 
-    # Prospect - Explorer
+    # Prospect
     path('api/prospect/coachs/', ProspectCoachListView.as_view(), name='prospect-coachs'),
     path('api/prospect/coachs/<int:coach_id>/', ProspectCoachDetailView.as_view(), name='prospect-coach-detail'),
+    path('api/prospects/salles/', PublicSalleListView.as_view(), name='prospect-salles'),
 ]
 
 if settings.DEBUG:

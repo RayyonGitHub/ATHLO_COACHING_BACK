@@ -10,9 +10,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Coach, Client, Programme
+from .models import Coach, Client, Programme, Salle
 from .serializers_prospect import PublicCoachSerializer, ProspectActivateAthleteSerializer
-
+from .serializers import SalleSerializer
+from core.views import calcul_distance
 
 CHECKOUT_SIGNER_SALT = "athlo-prospect-checkout-v1"
 CHECKOUT_TOKEN_MAX_AGE = 60 * 60 * 3  # 3h
@@ -344,3 +345,40 @@ class ProspectActivateAthleteView(APIView):
                 "coach_id": coach.id
             }
         }, status=status.HTTP_200_OK)
+
+class PublicSalleListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        lat = request.query_params.get('lat')
+        lng = request.query_params.get('lng')
+        rayon = request.query_params.get('rayon', 10)
+
+        salles = Salle.objects.all()
+        results = []
+
+        for salle in salles:
+            distance = None
+
+            if lat and lng and salle.latitude is not None and salle.longitude is not None:
+                distance = calcul_distance(
+                    float(lat),
+                    float(lng),
+                    float(salle.latitude),
+                    float(salle.longitude),
+                )
+
+                if distance > float(rayon):
+                    continue
+
+            results.append({
+                "id": salle.id,
+                "nom": salle.nom,
+                "adresse": salle.adresse,
+                "ville": salle.ville,
+                "distance_km": round(distance, 2) if distance is not None else None,
+            })
+
+        results.sort(key=lambda x: x["distance_km"] if x["distance_km"] is not None else 999999)
+
+        return Response(results, status=status.HTTP_200_OK)
