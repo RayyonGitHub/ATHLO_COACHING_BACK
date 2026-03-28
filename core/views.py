@@ -1221,7 +1221,13 @@ class ProspectCoachListView(APIView):
                 temp = []
 
                 for coach in queryset:
-                    coords = VILLE_COORDS.get(coach.ville)
+                    ville_coach = (coach.ville or "").strip().lower()
+
+                    coords = None
+                    for ville_ref, ville_coords in VILLE_COORDS.items():
+                        if ville_ref.lower() == ville_coach:
+                            coords = ville_coords
+                            break
 
                     if coords:
                         d = calcul_distance(lat, lng, coords[0], coords[1])
