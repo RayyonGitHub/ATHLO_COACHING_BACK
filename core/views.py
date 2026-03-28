@@ -161,7 +161,11 @@ class CoachMeView(APIView):
 
     def get(self, request):
         coach, _ = Coach.objects.get_or_create(user=request.user)
-        return Response(CoachSerializer(coach).data)
+        data = CoachSerializer(coach).data
+        data['prenom'] = request.user.first_name
+        data['nom'] = request.user.last_name
+        data['email'] = request.user.email
+        return Response(data)
 
     def patch(self, request):
         user = request.user
