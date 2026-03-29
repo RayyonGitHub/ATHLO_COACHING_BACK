@@ -2,18 +2,22 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from django.db.models.signals import post_save, post_delete, pre_save
+from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.validators import FileExtensionValidator
+import uuid
+
 
 # --- Validateurs ---
 def validate_non_negatif(value):
     if value <= 0:
         raise ValidationError("Cette valeur doit être supérieure à 0.")
-    
+
+
 def validate_date_pas_dans_le_futur(value):
     if value and value > timezone.now().date():
         raise ValidationError("La date de naissance ne peut pas être dans le futur.")
+
 
 # --- Modèles Profils ---
 class Coach(models.Model):
@@ -30,6 +34,7 @@ class Coach(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - Coach"
+
 
 class Client(models.Model):
     GENRE_CHOICES = [('M', 'Homme'), ('F', 'Femme'), ('O', 'Autre')]
@@ -67,9 +72,63 @@ class Client(models.Model):
     def __str__(self):
         return f"{self.prenom} {self.nom}"
 
+
+# --- Invitation paiement client créé par coach ---
+class ClientInvitation(models.Model):
+    OFFER_TYPES = [
+        ('seance', 'Séance unique'),
+        ('pack', 'Pack 10 séances'),
+        ('abonnement', 'Abonnement mensuel'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'En attente de paiement'),
+        ('paid', 'Payé'),
+        ('activated', 'Activé'),
+        ('expired', 'Expiré'),
+        ('cancelled', 'Annulé'),
+    ]
+
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='client_invitations')
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='payment_invitations')
+    token = models.CharField(max_length=64, unique=True, default=uuid.uuid4, editable=False)
+
+    email = models.EmailField()
+    phone = models.CharField(max_length=20, blank=True)
+
+    offer_type = models.CharField(max_length=20, choices=OFFER_TYPES, default='abonnement')
+    offer_label = models.CharField(max_length=100, default='Abonnement mensuel')
+    amount = models.FloatField(default=0.0)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payment_status = models.CharField(max_length=20, default='pending')
+
+    card_last4 = models.CharField(max_length=4, blank=True)
+
+    expires_at = models.DateTimeField()
+    paid_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        return f"Invitation {self.client} - {self.offer_label}"
+
+
 # --- Sport & Séances ---
 class Exercice(models.Model):
-    CATEGORIES = [('FORCE', 'Force & Musculation'), ('CARDIO', 'Cardio & Endurance'), ('SOUPLESSE', 'Souplesse & Mobilité'), ('ALTERO', 'Haltérophilie'), ('GYM', 'Gymnastique / Poids de corps')]
+    CATEGORIES = [
+        ('FORCE', 'Force & Musculation'),
+        ('CARDIO', 'Cardio & Endurance'),
+        ('SOUPLESSE', 'Souplesse & Mobilité'),
+        ('ALTERO', 'Haltérophilie'),
+        ('GYM', 'Gymnastique / Poids de corps')
+    ]
     nom = models.CharField(max_length=150, unique=True, verbose_name="Nom de l'exercice")
     description = models.TextField(blank=True, verbose_name="Description et consignes")
     categorie = models.CharField(max_length=20, choices=CATEGORIES, default='FORCE')
@@ -79,6 +138,7 @@ class Exercice(models.Model):
 
     def __str__(self):
         return f"{self.nom} ({self.get_categorie_display()})"
+
 
 class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
@@ -91,6 +151,7 @@ class Programme(models.Model):
 
     def __str__(self):
         return self.titre
+
 
 class Seance(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='seances_creees')
@@ -111,6 +172,7 @@ class Seance(models.Model):
     class Meta:
         ordering = ['jour_prevu', 'heure_debut', 'ordre']
 
+
 class SeanceExercice(models.Model):
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='exercices_details')
     exercice = models.ForeignKey(Exercice, on_delete=models.CASCADE)
@@ -123,6 +185,7 @@ class SeanceExercice(models.Model):
     class Meta:
         ordering = ['ordre']
 
+
 class Performance(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='performances')
     seance_exercice = models.ForeignKey(SeanceExercice, on_delete=models.CASCADE, related_name='performances')
@@ -132,8 +195,15 @@ class Performance(models.Model):
     notes_athlete = models.TextField(blank=True, null=True)
     date_enregistrement = models.DateTimeField(auto_now_add=True)
 
+
 class Inscription(models.Model):
-    STATUT_CHOICES = [('CONFIRME', 'Confirmé'), ('ATTENTE', 'Liste d\'attente'), ('ANNULE', 'Annulé'), ('PRESENT', 'Présent'), ('ABSENT', 'Absent')]
+    STATUT_CHOICES = [
+        ('CONFIRME', 'Confirmé'),
+        ('ATTENTE', 'Liste d\'attente'),
+        ('ANNULE', 'Annulé'),
+        ('PRESENT', 'Présent'),
+        ('ABSENT', 'Absent')
+    ]
     seance = models.ForeignKey(Seance, on_delete=models.CASCADE, related_name='inscriptions')
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='CONFIRME')
@@ -159,6 +229,7 @@ class Inscription(models.Model):
         self.clean()
         super().save(*args, **kwargs)
 
+
 class Indisponibilite(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='indisponibilites')
     titre = models.CharField(max_length=100, default="Indisponible")
@@ -168,12 +239,14 @@ class Indisponibilite(models.Model):
     est_conge = models.BooleanField(default=False)
     google_event_id = models.CharField(max_length=255, blank=True, null=True)
 
+
 class Salle(models.Model):
     nom = models.CharField(max_length=150)
     adresse = models.CharField(max_length=255)
     ville = models.CharField(max_length=100)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+
 
 class Avis(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='avis')
@@ -182,13 +255,15 @@ class Avis(models.Model):
     commentaire = models.TextField(blank=True)
     date = models.DateTimeField(auto_now_add=True)
 
+
 class Notification(models.Model):
     TYPES = [
         ('INSCRIPTION', 'Inscription'),
         ('DESINSCRIPTION', 'Désinscription'),
         ('ANNULATION', 'Annulation'),
         ('MODIFICATION', 'Modification'),
-        ('INFO', 'Information')
+        ('INFO', 'Information'),
+        ('PAIEMENT', 'Paiement'),
     ]
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
     seance = models.ForeignKey(Seance, on_delete=models.SET_NULL, null=True, blank=True)
@@ -196,6 +271,7 @@ class Notification(models.Model):
     type = models.CharField(max_length=20, choices=TYPES, default='INFO')
     est_lu = models.BooleanField(default=False)
     date_creation = models.DateTimeField(auto_now_add=True)
+
 
 # --- MESSAGERIE ---
 class Conversation(models.Model):
@@ -209,6 +285,7 @@ class Conversation(models.Model):
     class Meta:
         ordering = ['-updated_at', '-created_at']
 
+
 class ConversationParticipant(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='participants')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_conversations')
@@ -217,6 +294,7 @@ class ConversationParticipant(models.Model):
 
     class Meta:
         unique_together = ('conversation', 'user')
+
 
 class Message(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
@@ -228,8 +306,10 @@ class Message(models.Model):
     class Meta:
         ordering = ['created_at']
 
+
 def message_attachment_upload_path(instance, filename):
     return f"messages/conversation_{instance.message.conversation.id}/{filename}"
+
 
 class MessageAttachment(models.Model):
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='attachments')
@@ -239,6 +319,7 @@ class MessageAttachment(models.Model):
     )
     original_name = models.CharField(max_length=255)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
 
 class NotificationAthlete(models.Model):
     TYPES = [
@@ -256,6 +337,7 @@ class NotificationAthlete(models.Model):
 
     class Meta:
         ordering = ['-date_creation']
+
 
 @receiver(post_save, sender=Seance)
 def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
@@ -281,6 +363,7 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
             message=f"Tu as été inscrit(e) à la séance : {instance.titre}",
             type='SEANCE'
         )
+
 
 class Devis(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')

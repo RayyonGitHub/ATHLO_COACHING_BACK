@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Coach, Client, Programme, Devis
+
 
 class PublicCoachSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -64,3 +64,28 @@ class ProspectDevisCreateSerializer(serializers.Serializer):
     pathologiesBlessures = serializers.CharField(required=False, allow_blank=True)
     message = serializers.CharField(required=False, allow_blank=True)
 
+
+class InvitationCheckoutPaySerializer(serializers.Serializer):
+    invitation_token = serializers.CharField()
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20, allow_blank=True, required=False)
+
+    card_number = serializers.CharField()
+    expiry = serializers.CharField()
+    cvc = serializers.CharField()
+    cardholder_name = serializers.CharField()
+
+    billing_address = serializers.DictField(required=False)
+
+
+class InvitationSetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField()
+    confirm_password = serializers.CharField()
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({
+                "confirm_password": "Les mots de passe ne correspondent pas."
+            })
+        return attrs
