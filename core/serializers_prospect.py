@@ -1,5 +1,5 @@
 from rest_framework import serializers
-
+from .models import Coach, Client, Programme, Devis
 
 class PublicCoachSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -43,3 +43,24 @@ class ProspectActivateAthleteSerializer(serializers.Serializer):
     objectifs_sportifs = serializers.CharField(required=False, allow_blank=True, default='')
     pathologies_blessures = serializers.CharField(required=False, allow_blank=True, default='')
     consentement_rgpd = serializers.BooleanField(required=False, default=True)
+
+
+class ProspectDevisCreateSerializer(serializers.Serializer):
+    coach_id = serializers.IntegerField()
+
+    nom = serializers.CharField(max_length=100)
+    prenom = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    telephone = serializers.CharField(max_length=20, allow_blank=True, required=False)
+
+    age = serializers.IntegerField(required=False, allow_null=True)
+    taille = serializers.IntegerField(required=False, allow_null=True)
+    poids = serializers.FloatField(required=False, allow_null=True)
+
+    niveauActivite = serializers.CharField(required=False, allow_blank=True)
+    typeEntrainement = serializers.CharField(required=False, allow_blank=True)
+    objectifSportif = serializers.CharField(required=False, allow_blank=True)
+    budget = serializers.CharField(required=False, allow_blank=True)
+    pathologiesBlessures = serializers.CharField(required=False, allow_blank=True)
+    message = serializers.CharField(required=False, allow_blank=True)
+

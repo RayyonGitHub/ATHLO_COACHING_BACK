@@ -49,6 +49,7 @@ from core.views_prospect import (
     ProspectCheckoutPreviewView,
     ProspectActivateAthleteView,
     PublicSalleListView,
+    ProspectDemandeDevisView,
 )
 
 router = DefaultRouter()
@@ -131,6 +132,7 @@ urlpatterns = [
     path('api/prospect/coachs/', ProspectCoachListView.as_view(), name='prospect-coachs'),
     path('api/prospect/coachs/<int:coach_id>/', ProspectCoachDetailView.as_view(), name='prospect-coach-detail'),
     path('api/prospects/salles/', PublicSalleListView.as_view(), name='prospect-salles'),
+    path('api/prospects/devis/', ProspectDemandeDevisView.as_view(), name='prospect-devis'),
 ]
 
 if settings.DEBUG:

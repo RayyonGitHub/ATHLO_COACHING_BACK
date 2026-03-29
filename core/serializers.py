@@ -5,7 +5,7 @@ from django.db.models import Avg, Count
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
-    Inscription, Notification, NotificationAthlete, Salle, Avis
+    Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
 )
 
 # --- PROFILS ---
@@ -379,3 +379,14 @@ class ProspectCoachDetailSerializer(ProspectCoachListSerializer):
 
     class Meta(ProspectCoachListSerializer.Meta):
         fields = ProspectCoachListSerializer.Meta.fields + ['avis']
+
+class DevisSerializer(serializers.ModelSerializer):
+    coach_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Devis
+        fields = '__all__'
+
+    def get_coach_nom(self, obj):
+        full_name = f"{obj.coach.user.first_name} {obj.coach.user.last_name}".strip()
+        return full_name or obj.coach.user.username
