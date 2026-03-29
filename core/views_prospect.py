@@ -1,8 +1,12 @@
 from django.contrib.auth.models import User
-from django.core import signing
-from django.core.signing import BadSignature, SignatureExpired
+from django.contrib.auth.password_validation import validate_password
 from django.db.models import Avg
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
+from django.core import signing
+from django.core.signing import BadSignature, SignatureExpired
 
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -10,14 +14,17 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Coach, Client, Programme, Salle, Devis
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
     ProspectDevisCreateSerializer,
+    InvitationCheckoutPaySerializer,
+    InvitationSetPasswordSerializer,
 )
 from .serializers import SalleSerializer, DevisSerializer
 from core.views import calcul_distance
+
 
 CHECKOUT_SIGNER_SALT = "athlo-prospect-checkout-v1"
 CHECKOUT_TOKEN_MAX_AGE = 60 * 60 * 3  # 3h
@@ -95,6 +102,49 @@ def _serialize_public_coach(coach):
     }
 
     return PublicCoachSerializer(payload).data
+
+
+def _get_default_offer_for_invitation(coach):
+    offres = _normalize_offres(coach.offres_tarifs)
+
+    if float(offres.get('abonnement', 0)) > 0:
+        return ('abonnement', 'Abonnement mensuel', float(offres['abonnement']))
+
+    if float(offres.get('pack', 0)) > 0:
+        return ('pack', 'Pack 10 séances', float(offres['pack']))
+
+    return ('seance', 'Séance unique', float(offres['seance']))
+
+
+def _send_email(subject, message, recipient):
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
+        recipient_list=[recipient],
+        fail_silently=False,
+    )
+
+
+def _get_valid_invitation_or_response(token):
+    invitation = ClientInvitation.objects.select_related('coach__user', 'client__user').filter(token=token).first()
+
+    if not invitation:
+        return None, Response({"message": "Invitation introuvable."}, status=status.HTTP_404_NOT_FOUND)
+
+    if invitation.status == 'activated':
+        return None, Response({"message": "Cette invitation a déjà été utilisée."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if invitation.status == 'cancelled':
+        return None, Response({"message": "Cette invitation a été annulée."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if invitation.is_expired():
+        if invitation.status != 'expired':
+            invitation.status = 'expired'
+            invitation.save(update_fields=['status'])
+        return None, Response({"message": "Cette invitation a expiré."}, status=status.HTTP_400_BAD_REQUEST)
+
+    return invitation, None
 
 
 class PublicCoachListView(APIView):
@@ -186,10 +236,7 @@ class ProspectCheckoutPayView(APIView):
         if not cardholder_name:
             return Response({"message": "Nom du porteur requis."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Simulation paiement :
-        # - échec si carte finit par 0002 ou si CVC == 000
-        cvc = str(request.data.get('cvc', '')).strip()
-        payment_status = 'failed' if card_number.endswith('0002') or cvc == '000' else 'success'
+        payment_status = 'failed' if card_number.endswith('0002') or str(request.data.get('cvc', '')).strip() == '000' else 'success'
 
         token_payload = {
             "user_id": user.id,
@@ -350,6 +397,198 @@ class ProspectActivateAthleteView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+
+# -------------------------------------------------
+# NOUVEAU FLOW : CLIENT AJOUTÉ PAR LE COACH
+# -------------------------------------------------
+class InvitationCheckoutPreviewView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token', '').strip()
+        if not token:
+            return Response({"message": "Token manquant."}, status=status.HTTP_400_BAD_REQUEST)
+
+        invitation, error_response = _get_valid_invitation_or_response(token)
+        if error_response:
+            return error_response
+
+        return Response({
+            "coach": _serialize_public_coach(invitation.coach),
+            "offer": {
+                "type": invitation.offer_type,
+                "label": invitation.offer_label,
+                "price": invitation.amount,
+            },
+            "email": invitation.email,
+            "phone": invitation.phone,
+            "full_name": f"{invitation.client.prenom} {invitation.client.nom}".strip(),
+            "status": invitation.status,
+            "expires_at": invitation.expires_at,
+        }, status=status.HTTP_200_OK)
+
+
+class InvitationCheckoutPayView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = InvitationCheckoutPaySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        invitation, error_response = _get_valid_invitation_or_response(data['invitation_token'])
+        if error_response:
+            return error_response
+
+        if invitation.status in ['paid', 'activated']:
+            return Response(
+                {"message": "Cette invitation a déjà été réglée."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        card_number = ''.join(ch for ch in str(data.get('card_number', '')) if ch.isdigit())
+        cvc = str(data.get('cvc', '')).strip()
+
+        if not card_number or len(card_number) < 12:
+            return Response({"message": "Numéro de carte invalide."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_status = 'failed' if card_number.endswith('0002') or cvc == '000' else 'success'
+
+        invitation.email = data['email']
+        invitation.phone = data.get('phone', '')
+        invitation.card_last4 = card_number[-4:]
+        invitation.payment_status = payment_status
+
+        if payment_status == 'success':
+            invitation.status = 'paid'
+            invitation.paid_at = timezone.now()
+
+            client = invitation.client
+            user = client.user
+
+            client.email = data['email']
+            client.telephone = data.get('phone', '')
+            client.save(update_fields=['email', 'telephone'])
+
+            user.email = data['email']
+            user.username = data['email']
+            user.save(update_fields=['email', 'username'])
+
+            invitation.save(update_fields=[
+                'email',
+                'phone',
+                'card_last4',
+                'payment_status',
+                'status',
+                'paid_at',
+            ])
+
+            NotificationMessage = (
+                f"Paiement confirmé pour {client.prenom} {client.nom} "
+                f"({invitation.offer_label} - {invitation.amount:.2f} €)."
+            )
+
+            from .models import Notification
+            Notification.objects.create(
+                coach=invitation.coach,
+                seance=None,
+                type='PAIEMENT',
+                message=NotificationMessage
+            )
+
+            set_password_link = f"{settings.FRONTEND_URL}/invite/set-password?token={invitation.token}"
+
+            _send_email(
+                subject="ATHLO - Paiement confirmé, activez votre compte",
+                message=(
+                    f"Bonjour {client.prenom},\n\n"
+                    f"Votre paiement a bien été validé.\n\n"
+                    f"Pour activer votre compte ATHLO et définir votre mot de passe, "
+                    f"cliquez sur ce lien :\n{set_password_link}\n\n"
+                    f"Ce lien vous permettra d'accéder ensuite à votre espace client.\n\n"
+                    f"L'équipe ATHLO"
+                ),
+                recipient=invitation.email
+            )
+
+            return Response({
+                "payment_status": "success",
+                "message": "Paiement validé.",
+                "activation_token": invitation.token,
+                "coach": _serialize_public_coach(invitation.coach),
+                "offer": {
+                    "type": invitation.offer_type,
+                    "label": invitation.offer_label,
+                    "price": invitation.amount,
+                },
+            }, status=status.HTTP_200_OK)
+
+        invitation.save(update_fields=[
+            'email',
+            'phone',
+            'card_last4',
+            'payment_status',
+        ])
+
+        return Response({
+            "payment_status": "failed",
+            "message": "Paiement refusé.",
+        }, status=status.HTTP_200_OK)
+
+
+class InvitationSetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = InvitationSetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        invitation, error_response = _get_valid_invitation_or_response(data['token'])
+        if error_response:
+            return error_response
+
+        if invitation.status != 'paid':
+            return Response(
+                {"message": "Le paiement doit être validé avant de définir le mot de passe."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = invitation.client.user
+
+        try:
+            validate_password(data['new_password'], user=user)
+        except Exception as validation_error:
+            messages = getattr(validation_error, 'messages', None)
+            return Response({
+                "message": messages[0] if messages else "Mot de passe invalide."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(data['new_password'])
+        user.save()
+
+        invitation.status = 'activated'
+        invitation.activated_at = timezone.now()
+        invitation.save(update_fields=['status', 'activated_at'])
+
+        _send_email(
+            subject="ATHLO - Votre compte est prêt",
+            message=(
+                f"Bonjour {invitation.client.prenom},\n\n"
+                f"Votre compte ATHLO est maintenant activé.\n\n"
+                f"Vous pouvez vous connecter avec :\n"
+                f"Email : {user.email}\n"
+                f"Connexion : {settings.FRONTEND_URL}/login\n\n"
+                f"L'équipe ATHLO"
+            ),
+            recipient=user.email
+        )
+
+        return Response({
+            "message": "Compte activé avec succès."
+        }, status=status.HTTP_200_OK)
+
+
 class PublicSalleListView(APIView):
     permission_classes = [AllowAny]
 
@@ -386,7 +625,8 @@ class PublicSalleListView(APIView):
         results.sort(key=lambda x: x["distance_km"] if x["distance_km"] is not None else 999999)
 
         return Response(results, status=status.HTTP_200_OK)
-    
+
+
 class ProspectDemandeDevisView(APIView):
     permission_classes = [AllowAny]
 

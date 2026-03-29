@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Q, Sum, Min, Max, Avg, Count, F
+from django.db.models import Q, Sum, Min, Max, F
 from django.contrib.auth import authenticate, update_session_auth_hash
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
@@ -20,7 +20,7 @@ from icalendar import Calendar, Event
 from rest_framework import viewsets, status, generics, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, IsAdminUser, AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -28,7 +28,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import (
     Client, Coach, Exercice, Programme, Seance,
     SeanceExercice, Performance, Indisponibilite,
-    Inscription, Notification, NotificationAthlete, Salle, Avis
+    Inscription, Notification, NotificationAthlete, Salle, Avis,
+    ClientInvitation
 )
 from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
@@ -38,7 +39,7 @@ from .serializers import (
     ProspectCoachListSerializer, ProspectCoachDetailSerializer
 )
 
-# coordonnées villes + fonction calcul distance
+
 VILLE_COORDS = {
     "Aix-en-Provence": (43.5297, 5.4474),
     "Amiens": (49.8941, 2.2958),
@@ -82,6 +83,8 @@ VILLE_COORDS = {
     "Tours": (47.3941, 0.6848),
     "Villeurbanne": (45.7660, 4.8795),
 }
+
+
 def calcul_distance(lat1, lon1, lat2, lon2):
     R = 6371
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
@@ -89,12 +92,11 @@ def calcul_distance(lat1, lon1, lat2, lon2):
     dlat = lat2 - lat1
     dlon = lon2 - lon1
 
-    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     return R * c
 
-# --- 1. SÉCURITÉ & AUTH ---
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
@@ -114,6 +116,7 @@ class ChangePasswordView(APIView):
         user.save()
         update_session_auth_hash(request, user)
         return Response({"message": "Mot de passe modifié avec succès !"})
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -138,7 +141,6 @@ class LoginView(APIView):
             }
         })
 
-# --- 2. GESTION DES PROFILS ---
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
@@ -149,8 +151,29 @@ class ClientViewSet(viewsets.ModelViewSet):
             return Client.objects.filter(coach=self.request.user.coach_profile)
         return Client.objects.none()
 
-    def generate_password(self, length=10):
-        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+    def _get_default_offer_for_invitation(self, coach):
+        raw_offres = coach.offres_tarifs if isinstance(coach.offres_tarifs, dict) else {}
+
+        try:
+            abonnement = float(raw_offres.get('abonnement', 0) or 0)
+        except (TypeError, ValueError):
+            abonnement = 0
+
+        try:
+            pack = float(raw_offres.get('pack', 0) or 0)
+        except (TypeError, ValueError):
+            pack = 0
+
+        try:
+            seance = float(raw_offres.get('seance', 60) or 60)
+        except (TypeError, ValueError):
+            seance = 60
+
+        if abonnement > 0:
+            return ('abonnement', 'Abonnement mensuel', abonnement)
+        if pack > 0:
+            return ('pack', 'Pack 10 séances', pack)
+        return ('seance', 'Séance unique', seance)
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -161,6 +184,7 @@ class ClientViewSet(viewsets.ModelViewSet):
         email = serializer.validated_data.get('email')
         prenom = serializer.validated_data.get('prenom', '')
         nom = serializer.validated_data.get('nom', '')
+        telephone = serializer.validated_data.get('telephone', '')
 
         if not email:
             raise ValidationError({"email": "L'email est obligatoire."})
@@ -171,27 +195,41 @@ class ClientViewSet(viewsets.ModelViewSet):
         if User.objects.filter(username=email).exists():
             raise ValidationError({"email": "Un utilisateur avec cet email existe déjà."})
 
-        temp_password = self.generate_password()
-
-        user = User.objects.create_user(
+        user = User.objects.create(
             username=email,
             email=email,
-            password=temp_password,
             first_name=prenom,
-            last_name=nom
+            last_name=nom,
+            is_active=True,
+        )
+        user.set_unusable_password()
+        user.save()
+
+        client = serializer.save(coach=coach_profile, user=user)
+
+        offer_type, offer_label, amount = self._get_default_offer_for_invitation(coach_profile)
+
+        invitation = ClientInvitation.objects.create(
+            coach=coach_profile,
+            client=client,
+            email=email,
+            phone=telephone,
+            offer_type=offer_type,
+            offer_label=offer_label,
+            amount=amount,
+            expires_at=timezone.now() + timedelta(days=7),
         )
 
-        serializer.save(coach=coach_profile, user=user)
+        invitation_link = f"{settings.FRONTEND_URL}/invite/checkout?token={invitation.token}"
 
-        subject = "ATHLO - Votre compte a été créé"
+        subject = "ATHLO - Finalisez votre inscription"
         message = (
             f"Bonjour {prenom or nom or 'Athlète'},\n\n"
-            f"Un compte ATHLO a été créé pour vous par votre coach.\n\n"
-            f"Identifiants de connexion :\n"
-            f"Email : {email}\n"
-            f"Mot de passe provisoire : {temp_password}\n\n"
-            f"Nous vous recommandons de vous connecter puis de modifier votre mot de passe.\n\n"
-            f"Connexion : http://localhost:5173/login\n\n"
+            f"Votre coach vous a invité à rejoindre ATHLO.\n\n"
+            f"Avant d'activer votre compte, veuillez finaliser le paiement en cliquant sur ce lien :\n"
+            f"{invitation_link}\n\n"
+            f"Une fois le paiement validé, vous pourrez définir votre mot de passe et accéder à votre espace.\n\n"
+            f"Cette invitation expire le {invitation.expires_at.strftime('%d/%m/%Y à %H:%M')}.\n\n"
             f"L'équipe ATHLO"
         )
 
@@ -202,6 +240,14 @@ class ClientViewSet(viewsets.ModelViewSet):
             recipient_list=[email],
             fail_silently=False
         )
+
+        Notification.objects.create(
+            coach=coach_profile,
+            seance=None,
+            type='INFO',
+            message=f"Invitation de paiement envoyée à {prenom} {nom} ({email})."
+        )
+
 
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -235,6 +281,7 @@ class CoachMeView(APIView):
 
         return Response(serializer.errors, status=400)
 
+
 class AthleteMeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -262,6 +309,7 @@ class AthleteMeView(APIView):
             return Response(serializer.data)
 
         return Response(serializer.errors, status=400)
+
 
 class ProspectMeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -302,13 +350,13 @@ class ProspectMeView(APIView):
 
         return Response(serializer.errors, status=400)
 
-# --- 3. VUES SPORTIVES ---
 
 class ExerciceViewSet(viewsets.ModelViewSet):
     queryset = Exercice.objects.all()
     serializer_class = ExerciceSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filterset_fields = ['categorie']
+
 
 class ProgrammeViewSet(viewsets.ModelViewSet):
     serializer_class = ProgrammeSerializer
@@ -339,6 +387,7 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
                 )
         except Exception as e:
             print(f"⚠️ Erreur notification (mais programme créé) : {e}")
+
 
 class SeanceViewSet(viewsets.ModelViewSet):
     serializer_class = SeanceSerializer
@@ -565,7 +614,6 @@ class SeanceViewSet(viewsets.ModelViewSet):
             "notes": getattr(seance, 'notes_client', None)
         })
 
-# --- 4. DASHBOARD & STATS ---
 
 class AthleteDashboardView(APIView):
     permission_classes = [IsAuthenticated]
@@ -672,6 +720,7 @@ class AthleteDashboardView(APIView):
             }
         })
 
+
 class AthleteStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -727,7 +776,6 @@ class AthleteStatsView(APIView):
         except Exception as e:
             return Response({"erreur": str(e)}, status=500)
 
-# --- 5. NOTIFICATIONS ---
 
 class NotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationSerializer
@@ -746,6 +794,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
             'status': 'Toutes les notifications ont été marquées comme lues',
             'count': notifications.count()
         })
+
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -804,6 +853,7 @@ def athlete_reserver_seance(request, seance_id):
         "inscription_id": inscription.id
     }, status=status.HTTP_201_CREATED)
 
+
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -833,6 +883,7 @@ def athlete_annuler_reservation(request, inscription_id):
         {"message": "Votre réservation a été annulée."},
         status=status.HTTP_204_NO_CONTENT
     )
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -885,6 +936,7 @@ def export_athlete_calendar(request, athlete_id):
 
     return response
 
+
 class AthleteNotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationAthleteSerializer
     permission_classes = [IsAuthenticated]
@@ -900,7 +952,6 @@ class AthleteNotificationViewSet(viewsets.ModelViewSet):
         self.get_queryset().update(est_lu=True)
         return Response({'status': 'ok'})
 
-# --- 6. AUTRES (DÉMO, CALENDRIER, ETC.) ---
 
 class DemoStatsView(APIView):
     permission_classes = [AllowAny]
@@ -910,6 +961,7 @@ class DemoStatsView(APIView):
             "total_exercices": Exercice.objects.count(),
             "total_coachs": Coach.objects.count()
         })
+
 
 class CoachAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -961,6 +1013,7 @@ class CoachAnalyticsView(APIView):
             "chart_data": chart_data,
             "period": "7 derniers jours"
         })
+
 
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1029,6 +1082,7 @@ class CoachCalendarView(APIView):
 
         return Response(data)
 
+
 class IndisponibiliteViewSet(viewsets.ModelViewSet):
     serializer_class = IndisponibiliteSerializer
     permission_classes = [IsAuthenticated]
@@ -1068,12 +1122,14 @@ class IndisponibiliteViewSet(viewsets.ModelViewSet):
                 message=f"L'horaire de votre {type_event} '{nouvelle_indispo.titre}' a été modifié pour le {nouvelle_indispo.jour_prevu}."
             )
 
+
 class PerformanceCreateView(generics.CreateAPIView):
     serializer_class = PerformanceSerializer
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
         serializer.save(client=self.request.user.client_profile)
+
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -1125,6 +1181,7 @@ def export_coach_calendar(request, coach_id):
 
     return response
 
+
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def update_inscription_status(request, inscription_id):
@@ -1144,6 +1201,7 @@ def update_inscription_status(request, inscription_id):
         )
     return Response({"status": "ok"})
 
+
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def remove_participant(request, inscription_id):
@@ -1161,6 +1219,7 @@ def remove_participant(request, inscription_id):
         type='DESINSCRIPTION'
     )
     return Response(status=204)
+
 
 class MarquerSeanceRateeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1184,6 +1243,7 @@ class MarquerSeanceRateeView(APIView):
         print(f" Séance {seance_id} forcée à est_completee=True dans la BDD.")
 
         return Response({"message": "Séance marquée comme ratée et terminée."})
+
 
 class ProspectCoachListView(APIView):
     permission_classes = [AllowAny]
@@ -1210,7 +1270,6 @@ class ProspectCoachListView(APIView):
                 Q(specialites_tags__icontains=specialite)
             )
 
-        # 🔥 AJOUT DISTANCE ICI
         distance_map = {}
 
         if lat and lng:
@@ -1237,28 +1296,24 @@ class ProspectCoachListView(APIView):
                         distance_map[coach.id] = None
                         temp.append((9999, coach))
 
-                # filtre distance max
                 if distance_max:
                     try:
                         distance_max = float(distance_max)
                         temp = [(d, c) for d, c in temp if d <= distance_max]
-                    except:
+                    except Exception:
                         pass
 
                 temp.sort(key=lambda x: x[0])
                 queryset = [c for _, c in temp]
 
-            except:
+            except Exception:
                 return Response({"error": "lat/lng invalides"}, status=400)
 
-        # 🔽 SERIALIZATION
         coaches_data = ProspectCoachListSerializer(queryset, many=True).data
 
-        # 🔥 AJOUTER LA DISTANCE DANS LE JSON
         for c in coaches_data:
             c['distance'] = distance_map.get(c['id'])
 
-        # filtres existants
         if note_min:
             try:
                 note_min = float(note_min)

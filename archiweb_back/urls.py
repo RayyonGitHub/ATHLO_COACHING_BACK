@@ -4,19 +4,16 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-from core import views
 
+from core import views
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, ProspectMeView,
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
     PerformanceCreateView, CoachCalendarView, IndisponibiliteViewSet,
-    NotificationViewSet,
-    AthleteNotificationViewSet,
-    ChangePasswordView, MarquerSeanceRateeView,
-    ProspectCoachListView,
-    ProspectCoachDetailView,
+    NotificationViewSet, AthleteNotificationViewSet,
+    ChangePasswordView, MarquerSeanceRateeView
 )
 from core.views_auth import (
     register_view,
@@ -25,8 +22,12 @@ from core.views_auth import (
     reset_password_view,
 )
 from core.views_admin import (
-    admin_login_view, admin_coach_list,
-    admin_stats_view, admin_toggle_coach_status
+    admin_login_view,
+    admin_coach_list,
+    admin_athlete_list,
+    admin_stats_view,
+    admin_toggle_coach_status,
+    admin_delete_athlete
 )
 from core.views import export_coach_calendar, remove_participant, update_inscription_status
 from core.views_messages import (
@@ -48,9 +49,13 @@ from core.views_prospect import (
     ProspectCheckoutPayView,
     ProspectCheckoutPreviewView,
     ProspectActivateAthleteView,
+    InvitationCheckoutPreviewView,
+    InvitationCheckoutPayView,
+    InvitationSetPasswordView,
     PublicSalleListView,
     ProspectDemandeDevisView,
 )
+
 
 router = DefaultRouter()
 router.register(r'clients', ClientViewSet, basename='client')
@@ -84,6 +89,15 @@ urlpatterns = [
     path('api/prospects/checkout/preview/', ProspectCheckoutPreviewView.as_view(), name='prospect-checkout-preview'),
     path('api/prospects/checkout/activate-athlete/', ProspectActivateAthleteView.as_view(), name='prospect-activate-athlete'),
 
+    # Flow invitation coach -> client
+    path('api/prospects/invitations/checkout/preview/', InvitationCheckoutPreviewView.as_view(), name='invitation-checkout-preview'),
+    path('api/prospects/invitations/checkout/pay/', InvitationCheckoutPayView.as_view(), name='invitation-checkout-pay'),
+    path('api/prospects/invitations/set-password/', InvitationSetPasswordView.as_view(), name='invitation-set-password'),
+
+    # Prospect / Salles / Devis
+    path('api/prospects/salles/', PublicSalleListView.as_view(), name='prospect-salles'),
+    path('api/prospects/devis/', ProspectDemandeDevisView.as_view(), name='prospect-devis'),
+
     # Démo & Analytics
     path('api/demo/stats/', DemoStatsView.as_view(), name='demo-stats'),
     path('api/coach/analytics/', CoachAnalyticsView.as_view(), name='coach-analytics'),
@@ -100,9 +114,11 @@ urlpatterns = [
     path('api/admin/login/', admin_login_view, name='admin-login'),
     path('api/admin/stats/', admin_stats_view, name='admin-stats'),
     path('api/admin/coachs/', admin_coach_list, name='admin-coach-list'),
+    path('api/admin/athletes/', admin_athlete_list, name='admin-athlete-list'),
+    path('api/admin/athletes/<int:pk>/delete/', admin_delete_athlete, name='admin-athlete-delete'),
     path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
 
-    # Calendrier coach et athlete
+    # Calendrier coach et athlète
     path('api/calendar/coach/<int:coach_id>/', CoachCalendarView.as_view(), name='coach-calendar'),
     path('api/calendar/export/<int:coach_id>/', export_coach_calendar, name='export-calendar'),
     path('api-auth/', include('rest_framework.urls')),
@@ -127,12 +143,6 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
-
-    # Prospect
-    path('api/prospect/coachs/', ProspectCoachListView.as_view(), name='prospect-coachs'),
-    path('api/prospect/coachs/<int:coach_id>/', ProspectCoachDetailView.as_view(), name='prospect-coach-detail'),
-    path('api/prospects/salles/', PublicSalleListView.as_view(), name='prospect-salles'),
-    path('api/prospects/devis/', ProspectDemandeDevisView.as_view(), name='prospect-devis'),
 ]
 
 if settings.DEBUG:

@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import (
     Coach,
     Client,
+    ClientInvitation,
     Exercice,
     NotificationAthlete,
     Programme,
@@ -12,19 +13,20 @@ from .models import (
     ConversationParticipant,
     Message,
     MessageAttachment,
-    Performance, # <-- AJOUTÉ ICI
+    Performance,
 )
 
 # Profils
 admin.site.register(Coach)
 admin.site.register(Client)
+admin.site.register(ClientInvitation)
 
 # Sport
 admin.site.register(Exercice)
 admin.site.register(Programme)
 admin.site.register(Seance)
 admin.site.register(SeanceExercice)
-admin.site.register(Performance) # <-- AJOUTÉ ICI
+admin.site.register(Performance)
 
 
 @admin.register(Inscription)
@@ -60,5 +62,6 @@ class MessageAdmin(admin.ModelAdmin):
 class MessageAttachmentAdmin(admin.ModelAdmin):
     list_display = ('id', 'message', 'original_name', 'uploaded_at')
     search_fields = ('original_name',)
-    
+
+
 admin.site.register(NotificationAthlete)
