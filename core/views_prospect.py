@@ -10,9 +10,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Coach, Client, Programme, Salle
-from .serializers_prospect import PublicCoachSerializer, ProspectActivateAthleteSerializer
-from .serializers import SalleSerializer
+from .models import Coach, Client, Programme, Salle, Devis
+from .serializers_prospect import (
+    PublicCoachSerializer,
+    ProspectActivateAthleteSerializer,
+    ProspectDevisCreateSerializer,
+)
+from .serializers import SalleSerializer, DevisSerializer
 from core.views import calcul_distance
 
 CHECKOUT_SIGNER_SALT = "athlo-prospect-checkout-v1"
@@ -382,3 +386,53 @@ class PublicSalleListView(APIView):
         results.sort(key=lambda x: x["distance_km"] if x["distance_km"] is not None else 999999)
 
         return Response(results, status=status.HTTP_200_OK)
+    
+class ProspectDemandeDevisView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        email = (request.query_params.get('email') or '').strip()
+
+        if not email:
+            return Response(
+                {"message": "Email manquant pour récupérer l'historique."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        devis = Devis.objects.filter(email__iexact=email).select_related('coach__user').order_by('-id')
+        serializer = DevisSerializer(devis, many=True)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = ProspectDevisCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+        coach = get_object_or_404(Coach, id=data['coach_id'])
+
+        devis = Devis.objects.create(
+            coach=coach,
+            nom=data['nom'],
+            prenom=data['prenom'],
+            email=data['email'],
+            telephone=data.get('telephone', ''),
+            age=data.get('age'),
+            taille=data.get('taille'),
+            poids=data.get('poids'),
+            niveau_activite=data.get('niveauActivite', ''),
+            type_entrainement=data.get('typeEntrainement', ''),
+            objectif_sportif=data.get('objectifSportif', ''),
+            budget=data.get('budget', ''),
+            pathologies_blessures=data.get('pathologiesBlessures', ''),
+            message=data.get('message', ''),
+        )
+
+        return Response(
+            {
+                "message": "Demande de devis envoyée avec succès.",
+                "id": devis.id,
+                "statut": devis.statut,
+            },
+            status=status.HTTP_201_CREATED
+        )

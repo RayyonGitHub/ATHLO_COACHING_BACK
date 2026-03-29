@@ -281,3 +281,28 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
             message=f"Tu as été inscrit(e) à la séance : {instance.titre}",
             type='SEANCE'
         )
+
+class Devis(models.Model):
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')
+
+    nom = models.CharField(max_length=100)
+    prenom = models.CharField(max_length=100)
+    email = models.EmailField()
+    telephone = models.CharField(max_length=20, blank=True)
+
+    age = models.IntegerField(null=True, blank=True)
+    taille = models.IntegerField(null=True, blank=True)
+    poids = models.FloatField(null=True, blank=True)
+
+    niveau_activite = models.CharField(max_length=50, blank=True)
+    type_entrainement = models.CharField(max_length=50, blank=True)
+    objectif_sportif = models.TextField(blank=True)
+    budget = models.CharField(max_length=50, blank=True)
+    pathologies_blessures = models.TextField(blank=True)
+    message = models.TextField(blank=True)
+
+    statut = models.CharField(max_length=20, default="en_attente")
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.prenom} {self.nom} - {self.coach}"
