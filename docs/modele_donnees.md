@@ -1,146 +1,247 @@
 # Modèle de données
 
-Ce diagramme représente les principales entités du système ArchiWeb 2026 et leurs relations, en cohérence avec l’expression de besoins du client.
+Ce document décrit le modèle de données de l’application de gestion de coaching sportif.  
+Il est basé sur les modèles Django implémentés dans le projet.
 
-## Description des entités principales
+---
 
-- **Utilisateur** : information de base (id, nom, prénom, email, mot de passe)
-- **Coach** : spécialité, téléphone, clients associés
-- **Client** : informations personnelles, objectifs sportifs, pathologies, contrats, groupes et tags
-- **Séance** : date, durée, type, description, association à un ou plusieurs clients
-- **Programme** : nom, description, durée totale, niveau, séances associées
-- **Exercice** : nom, catégorie, niveau, consignes
-- **Contrat** : type, date début/fin, prix, TVA, paiements associés
-- **Paiement** : montant, date, mode
-- **Groupe** : nom, clients associés
-- **Tag** : nom, clients associés
-- **Message** : contenu, expéditeur, destinataire(s), date
+## 🧠 Vue d’ensemble
 
-## Diagramme de classes
+Le système repose sur deux types d’utilisateurs :
+- des **coachs**
+- des **clients**
+
+Chaque utilisateur possède un compte (`User`) et un profil spécifique (`Coach` ou `Client`).
+
+Le système gère :
+- des programmes d’entraînement
+- des séances
+- des exercices
+- les performances
+- les inscriptions
+- une messagerie interne
+- des notifications
+- des demandes de devis
+
+---
+
+## 📦 Entités principales
+
+### 👤 User
+Utilisateur de base géré par Django (authentification).
+
+---
+
+### 🧑‍🏫 Coach
+Profil coach associé à un utilisateur.
+
+- téléphone
+- spécialité
+- ville
+- offres et tarifs (JSON)
+- spécialités (tags JSON)
+- tokens Google Calendar
+
+---
+
+### 🧑‍💼 Client
+Profil client associé à un utilisateur.
+
+- informations personnelles (nom, prénom, email…)
+- données physiques (taille, poids…)
+- objectifs sportifs
+- pathologies
+- niveau d’activité
+- coach référent
+- consentement RGPD
+- données onboarding (JSON)
+
+---
+
+### 🏋️ Exercice
+Définition d’un exercice sportif.
+
+- nom
+- catégorie
+- description
+- muscle principal
+- lien vidéo
+
+---
+
+### 📋 Programme
+Programme créé par un coach.
+
+- titre
+- description
+- dates
+- coach créateur
+- client associé (optionnel)
+
+---
+
+### 🗓️ Séance
+Séance d’entraînement.
+
+- titre
+- date / heure
+- capacité
+- statut (complétée ou non)
+- coach
+- programme associé (optionnel)
+
+---
+
+### 🔁 SéanceExercice
+Détail des exercices dans une séance.
+
+- nombre de séries
+- répétitions
+- poids
+- temps de repos
+- ordre
+
+---
+
+### 📊 Performance
+Résultats réalisés par un client.
+
+- séries effectuées
+- répétitions
+- poids utilisé
+- notes
+
+---
+
+### ✅ Inscription
+Participation d’un client à une séance.
+
+- statut (confirmé, attente, absent…)
+- gestion de la capacité maximale
+
+---
+
+### 🚫 Indisponibilité
+Créneaux d’indisponibilité d’un coach.
+
+---
+
+### 🏢 Salle
+Lieu physique.
+
+- nom
+- adresse
+- ville
+- coordonnées GPS
+
+---
+
+### ⭐ Avis
+Avis donné par un client à un coach.
+
+---
+
+### 🔔 Notification (coach)
+Notifications liées aux séances et événements.
+
+---
+
+### 🔔 NotificationAthlete (client)
+Notifications spécifiques au client.
+
+---
+
+### 💬 Messagerie
+
+#### Conversation
+- type (direct ou groupe)
+- créateur
+
+#### ConversationParticipant
+- participants d’une conversation
+
+#### Message
+- contenu
+- expéditeur
+- date
+
+#### MessageAttachment
+- fichiers joints
+
+---
+
+### 📄 Devis
+Demande de devis envoyée à un coach.
+
+- informations personnelles
+- objectifs
+- budget
+- statut
+
+---
+
+## 🔗 Relations principales
+
+- Un **User** possède :
+  - 0 ou 1 **Coach**
+  - 0 ou 1 **Client**
+
+- Un **Coach** :
+  - gère plusieurs **Clients**
+  - crée plusieurs **Programmes**
+  - planifie plusieurs **Séances**
+
+- Un **Programme** :
+  - contient plusieurs **Séances**
+  - peut être assigné à un **Client**
+
+- Une **Séance** :
+  - contient plusieurs **SéanceExercice**
+  - possède plusieurs **Inscriptions**
+
+- Un **Client** :
+  - réalise des **Performances**
+  - s’inscrit à des **Séances**
+  - reçoit des **Notifications**
+
+- Une **Conversation** :
+  - contient plusieurs **Messages**
+  - possède plusieurs participants
+
+---
+
+## 📊 Diagramme (Mermaid)
+
 ```mermaid
 classDiagram
-    class Utilisateur {
-        +id: int
-        +nom: string
-        +prenom: string
-        +email: string
-        +mot_de_passe: string
-        +role: string
-    }
 
-    class Coach {
-        +specialite: string
-        +telephone: string
-    }
+    User --> Coach
+    User --> Client
 
-    class Client {
-        +nom: string
-        +prenom: string
-        +email: string
-        +telephone: string
-        +date_naissance: date
-        +taille: int
-        +poids: float
-        +objectifs_sportifs: string
-        +pathologies_blessures: string
-        +consentement_rgpd: bool
-        +est_archive: bool
-        +date_creation: datetime
-    }
+    Coach --> Client
+    Coach --> Programme
+    Coach --> Seance
 
-    class Salle {
-        +nom: string
-        +adresse: string
-        +telephone: string
-    }
+    Programme --> Seance
 
-    class Seance {
-        +date: date
-        +duree: int
-        +type: string
-        +description: string
-        +capacite_max: int
-    }
+    Seance --> SeanceExercice
+    Exercice --> SeanceExercice
 
-    class Programme {
-        +nom: string
-        +description: string
-        +duree_total: int
-        +niveau: string
-        +payant: bool
-    }
+    Client --> Performance
+    SeanceExercice --> Performance
 
-    class Exercice {
-        +nom: string
-        +categorie: string
-        +niveau: string
-        +consignes: string
-    }
+    Client --> Inscription
+    Seance --> Inscription
 
-    class Offre {
-        +nom: string
-        +type: string
-        +prix: float
-        +tva: float
-    }
+    Coach --> Indisponibilite
+    Coach --> Avis
+    Client --> Avis
 
-    class Contrat {
-        +type: string
-        +date_debut: date
-        +date_fin: date
-        +prix_total: float
-        +statut: string
-    }
+    Conversation --> Message
+    User --> Message
+    Conversation --> ConversationParticipant
+    User --> ConversationParticipant
 
-    class Facture {
-        +numero: string
-        +date_emission: date
-        +montant_total: float
-        +statut: string
-    }
+    Message --> MessageAttachment
 
-    class Paiement {
-        +montant: float
-        +date: date
-        +mode: string
-    }
-
-    class Message {
-        +contenu: string
-        +date_envoi: datetime
-        +lu: bool
-    }
-
-    class Groupe {
-        +nom: string
-    }
-
-    class Tag {
-        +nom: string
-    }
-
-    %% Héritage
-    Utilisateur <|-- Coach
-    Utilisateur <|-- Client
-
-    %% Relations métier
-    Coach "1" -- "0..*" Client : gère
-    Coach "1" -- "0..*" Seance : planifie
-    Coach "0..*" -- "0..*" Salle : intervient_dans
-
-    Client "0..*" -- "0..*" Seance : participe
-    Seance "1" -- "0..*" Exercice : contient
-    Programme "1" -- "0..*" Seance : inclut
-
-    Offre "1" -- "0..*" Contrat : definit
-    Client "1" -- "0..*" Contrat : possède
-
-    Contrat "1" -- "0..*" Facture : genere
-    Facture "1" -- "1..*" Paiement : reglee_par
-
-    Client "0..*" -- "0..*" Groupe : appartient
-    Client "0..*" -- "0..*" Tag : etiquete
-
-    Utilisateur "1" -- "0..*" Message : envoie
-    Utilisateur "1" -- "0..*" Message : recoit
-```
+    Coach --> Devis
