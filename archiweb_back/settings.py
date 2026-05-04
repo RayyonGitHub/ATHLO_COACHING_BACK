@@ -14,6 +14,9 @@ SECRET_KEY = 'django-insecure-p8v$q9ja4v1ia3iiy2ymg*qv&7pw3c5p7be+7u4gtxptji)thq
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+STRAVA_CLIENT_ID = "235231"
+STRAVA_CLIENT_SECRET = "3856cd52dde7005dce6fc3a233b26d7793a5164c"
+
 ALLOWED_HOSTS = []
 
 # --- Application definition ---

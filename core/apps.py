@@ -12,11 +12,10 @@ class CoreConfig(AppConfig):
         except ImportError:
             pass
 
-        if os.environ.get('RUN_MAIN') == 'true':
-            from apscheduler.schedulers.background import BackgroundScheduler
-            from .tasks import generer_rappels_automatiques
-
-            scheduler = BackgroundScheduler()
-            scheduler.add_job(generer_rappels_automatiques, 'interval', minutes=1)
-            scheduler.start()
-            print(" [SYSTEM] Le moteur de rappels automatiques est lancé (Vérification toutes les 60s)...")
+        # if os.environ.get('RUN_MAIN') == 'true':
+#     from apscheduler.schedulers.background import BackgroundScheduler
+#     from .tasks import generer_rappels_automatiques
+#
+#     scheduler = BackgroundScheduler()
+#     scheduler.add_job(generer_rappels_automatiques, 'interval', minutes=1)
+#     scheduler.start()

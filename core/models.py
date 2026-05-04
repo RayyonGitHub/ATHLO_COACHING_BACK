@@ -68,7 +68,15 @@ class Client(models.Model):
     est_archive = models.BooleanField(default=False, verbose_name="Archivé")
     tags = models.CharField(max_length=50, default="Standard", blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
+# --- NOUVEAUX CHAMPS : Intégrations Sportives (Strava & Garmin) ---
+    strava_access_token = models.TextField(blank=True, null=True)
+    strava_refresh_token = models.TextField(blank=True, null=True)
+    strava_token_expires_at = models.DateTimeField(blank=True, null=True)
+    strava_athlete_id = models.CharField(max_length=100, blank=True, null=True)
 
+    garmin_access_token = models.TextField(blank=True, null=True)
+    garmin_refresh_token = models.TextField(blank=True, null=True)
+    garmin_token_expires_at = models.DateTimeField(blank=True, null=True)
     def __str__(self):
         return f"{self.prenom} {self.nom}"
 
@@ -389,3 +397,31 @@ class Devis(models.Model):
 
     def __str__(self):
         return f"{self.prenom} {self.nom} - {self.coach}"
+    
+    # --- Données Sportives Importées (Strava / Garmin) ---
+class ActiviteExterne(models.Model):
+    PLATEFORMES = [
+        ('STRAVA', 'Strava'),
+        ('GARMIN', 'Garmin')
+    ]
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='activites_externes')
+    plateforme = models.CharField(max_length=20, choices=PLATEFORMES)
+    external_id = models.CharField(max_length=255, unique=True, help_text="ID unique de l'activité sur Strava/Garmin")
+    
+    nom = models.CharField(max_length=255, help_text="Titre de l'activité (ex: Course matinale)")
+    type_activite = models.CharField(max_length=100, help_text="Run, Ride, Swim, Workout...")
+    date_debut = models.DateTimeField()
+    
+    distance_metres = models.FloatField(null=True, blank=True)
+    temps_secondes = models.FloatField(null=True, blank=True)
+    calories = models.FloatField(null=True, blank=True)
+    frequence_cardiaque_moyenne = models.FloatField(null=True, blank=True)
+    
+    donnees_brutes = models.JSONField(default=dict, blank=True, help_text="Stocke toute la réponse brute de l'API au cas où")
+    date_import = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_debut']
+
+    def __str__(self):
+        return f"{self.nom} - {self.plateforme} ({self.client.prenom} {self.client.nom})"

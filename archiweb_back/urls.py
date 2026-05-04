@@ -6,6 +6,15 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from core import views
+
+
+from core.views_integrations import (
+    get_external_activities,
+    integrations_status,
+    strava_connect,
+    strava_disconnect,
+     strava_sync # <-- NOUVEAU
+)
 from core.views import (
     ClientViewSet, CoachMeView, AthleteMeView, ProspectMeView,
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
@@ -143,6 +152,12 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
+# Intégrations Sportives (Strava / Garmin) pour l'Athlète
+    path('api/athlete/integrations/status/', integrations_status, name='integrations-status'),
+    path('api/athlete/integrations/strava/connect/', strava_connect, name='strava-connect'),
+    path('api/athlete/integrations/strava/disconnect/', strava_disconnect, name='strava-disconnect'),
+    path('api/athlete/integrations/strava/sync/', strava_sync, name='strava-sync'),
+    path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
 ]
 
 if settings.DEBUG:
