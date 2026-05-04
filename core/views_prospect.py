@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
@@ -360,7 +360,7 @@ class ProspectActivateAthleteView(APIView):
                 "consentement_rgpd": data.get('consentement_rgpd', True),
             }
         )
-
+        
         if not created:
             athlete_profile.coach = coach
             athlete_profile.prenom = data['prenom']
@@ -380,7 +380,25 @@ class ProspectActivateAthleteView(APIView):
             athlete_profile.save()
 
         refresh = RefreshToken.for_user(user)
+        montant_ttc = payload.get("amount", 0)
+        commande = Commande.objects.create(
+            client=athlete_profile,
+            coach=coach,
+            offre_label=payload.get("offer_label"),
+            offre_type=payload.get("offer_type"),
+            montant_ttc=montant_ttc,
+            montant_ht=round(montant_ttc / 1.2, 2), # Calcul automatique du HT (TVA 20%)
+            status='PAID'
+        )
 
+        # 2. Génération automatique de l'entrée Facture
+        Facture.objects.create(commande=commande)
+
+        # 3. Si c'est un pack, on crédite le solde de l'athlète
+        if payload.get("offer_type") == 'pack':
+            athlete_profile.seances_restantes = (athlete_profile.seances_restantes or 0) + 10
+            athlete_profile.save()
+            
         return Response({
             "message": "Paiement confirmé et profil athlète activé.",
             "token": str(refresh.access_token),

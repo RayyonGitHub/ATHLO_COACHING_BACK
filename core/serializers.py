@@ -5,7 +5,7 @@ from django.db.models import Avg, Count
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
-    Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
+    Inscription, Notification, NotificationAthlete, Salle, Avis, Devis, Commande, Facture
 )
 
 # --- PROFILS ---
@@ -390,3 +390,24 @@ class DevisSerializer(serializers.ModelSerializer):
     def get_coach_nom(self, obj):
         full_name = f"{obj.coach.user.first_name} {obj.coach.user.last_name}".strip()
         return full_name or obj.coach.user.username
+    
+class FactureSerializer(serializers.ModelSerializer):
+    pdf_file = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Facture
+        fields = ['id', 'numero_facture', 'date_emission', 'pdf_file']
+
+    def get_pdf_file(self, obj):
+        if obj.pdf_file:
+            return obj.pdf_file.url  # Renvoie le chemin relatif (ex: /media/factures/...)
+        return None
+
+class CommandeSerializer(serializers.ModelSerializer):
+    facture = FactureSerializer(read_only=True)
+    class Meta:
+        model = Commande
+        fields = [
+            'id', 'order_number', 'offre_label', 'offre_type', 
+            'montant_ttc', 'status', 'date_commande', 'facture'
+        ]

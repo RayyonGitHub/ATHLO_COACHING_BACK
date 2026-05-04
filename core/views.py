@@ -16,7 +16,7 @@ from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.conf import settings
 from icalendar import Calendar, Event
-
+from decimal import Decimal
 from rest_framework import viewsets, status, generics, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -29,14 +29,14 @@ from .models import (
     Client, Coach, Exercice, Programme, Seance,
     SeanceExercice, Performance, Indisponibilite,
     Inscription, Notification, NotificationAthlete, Salle, Avis,
-    ClientInvitation
+    ClientInvitation, Commande
 )
 from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
     ProgrammeSerializer, SeanceSerializer, PerformanceSerializer,
     IndisponibiliteSerializer, NotificationSerializer,
     NotificationAthleteSerializer, SalleSerializer, AvisSerializer,
-    ProspectCoachListSerializer, ProspectCoachDetailSerializer
+    ProspectCoachListSerializer, ProspectCoachDetailSerializer, CommandeSerializer
 )
 
 
@@ -976,6 +976,7 @@ class CoachAnalyticsView(APIView):
 
         total_athletes = Client.objects.filter(coach=coach).count()
 
+        # --- LOGIQUE SÉANCES (Existante) ---
         seances_globales = Seance.objects.filter(
             Q(coach=coach) | Q(programme__coach=coach)
         ).distinct()
@@ -991,7 +992,12 @@ class CoachAnalyticsView(APIView):
         if total_seances > 0:
             completion_rate = int((seances_completees / total_seances) * 100)
 
-        total_volume = seances_completees * 450
+        # --- NOUVELLE LOGIQUE REVENUS (Reporting Réel) ---
+        # On calcule le Chiffre d'Affaires total généré par ce coach
+        total_ca = Commande.objects.filter(
+            coach=coach, 
+            status='PAID'
+        ).aggregate(Sum('montant_ttc'))['montant_ttc__sum'] or 0
 
         chart_data = []
         for i in range(7):
@@ -1009,11 +1015,10 @@ class CoachAnalyticsView(APIView):
         return Response({
             "total_athletes": total_athletes,
             "completion_rate": completion_rate,
-            "total_volume": total_volume,
+            "total_volume": round(total_ca, 2), # On remplace le volume fictif par le CA réel
             "chart_data": chart_data,
             "period": "7 derniers jours"
         })
-
 
 class CoachCalendarView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1358,4 +1363,15 @@ class ProspectCoachDetailView(APIView):
             id=coach_id
         )
         serializer = ProspectCoachDetailSerializer(coach)
+        return Response(serializer.data)
+class AthleteCommandeHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'client_profile'):
+            return Response({"error": "Accès réservé aux athlètes."}, status=403)
+        
+        # On récupère toutes les commandes de l'athlète connecté
+        commandes = Commande.objects.filter(client=request.user.client_profile).order_by('-date_commande')
+        serializer = CommandeSerializer(commandes, many=True)
         return Response(serializer.data)

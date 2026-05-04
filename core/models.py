@@ -6,7 +6,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.validators import FileExtensionValidator
 import uuid
-
+from django.utils import timezone
 
 # --- Validateurs ---
 def validate_non_negatif(value):
@@ -37,6 +37,7 @@ class Coach(models.Model):
 
 
 class Client(models.Model):
+    seances_restantes = models.IntegerField(default=0)
     GENRE_CHOICES = [('M', 'Homme'), ('F', 'Femme'), ('O', 'Autre')]
     ACTIVITE_CHOICES = [
         ('1.2', 'Sédentaire (Bureau, peu de sport)'),
@@ -389,3 +390,53 @@ class Devis(models.Model):
 
     def __str__(self):
         return f"{self.prenom} {self.nom} - {self.coach}"
+    
+
+
+class Commande(models.Model):
+    STATUS_CHOICES = [('PENDING', 'En attente'), ('PAID', 'Payée'), ('FAILED', 'Échouée')]
+    
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='commandes')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='ventes')
+    order_number = models.CharField(max_length=40, unique=True, default=uuid.uuid4)
+    
+    # Détails de l'offre
+    offre_label = models.CharField(max_length=150)
+    offre_type = models.CharField(max_length=50) # 'seance', 'pack', 'abonnement'
+    
+    # Financier
+    montant_ht = models.FloatField()
+    tva_taux = models.FloatField(default=20.0)
+    montant_ttc = models.FloatField()
+    
+    # État
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    date_commande = models.DateTimeField(auto_now_add=True)
+    
+    # Référence Stripe (pour plus tard)
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return f"Commande {self.order_number} - {self.client}"
+
+class Facture(models.Model):
+    commande = models.OneToOneField(Commande, on_delete=models.CASCADE, related_name='facture')
+    numero_facture = models.CharField(max_length=50, unique=True)
+    date_emission = models.DateTimeField(auto_now_add=True)
+    pdf_file = models.FileField(upload_to='factures/', blank=True, null=True)
+
+    def __str__(self):
+        return f"Facture {self.numero_facture}"
+
+    # --- Modifier la méthode save dans la classe Facture ---
+    def save(self, *args, **kwargs):
+        if not self.numero_facture:
+            self.numero_facture = f"FAC-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:5].upper()}"
+        
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        if is_new:
+            from .invoice_utils import generate_invoice_pdf
+            generate_invoice_pdf(self)
+            super().save(update_fields=['pdf_file'])
