@@ -3,7 +3,7 @@ import datetime
 from django.utils import timezone
 from django.db.models import Avg, Count
 from .models import (
-    Client, Coach, Exercice, Programme, Seance, 
+    ActiviteExterne, Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
     Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
 )
@@ -390,3 +390,10 @@ class DevisSerializer(serializers.ModelSerializer):
     def get_coach_nom(self, obj):
         full_name = f"{obj.coach.user.first_name} {obj.coach.user.last_name}".strip()
         return full_name or obj.coach.user.username
+    
+    from .models import ActiviteExterne
+
+class ActiviteExterneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ActiviteExterne
+        fields = '__all__'
