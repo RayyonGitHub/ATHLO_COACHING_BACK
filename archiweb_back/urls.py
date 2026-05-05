@@ -153,6 +153,7 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
+<<<<<<< HEAD
 # Intégrations Sportives (Strava / Garmin) pour l'Athlète
     path('api/athlete/integrations/status/', integrations_status, name='integrations-status'),
     path('api/athlete/integrations/strava/connect/', strava_connect, name='strava-connect'),
@@ -160,6 +161,10 @@ urlpatterns = [
     path('api/athlete/integrations/strava/sync/', strava_sync, name='strava-sync'),
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
 
+=======
+    # --- À AJOUTER DANS urlpatterns ---
+    path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
+>>>>>>> paiement-back
 ]
 
 if settings.DEBUG:
