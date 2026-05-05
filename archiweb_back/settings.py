@@ -1,10 +1,12 @@
 """
 Django settings for archiweb_back project.
 """
+import os
 from datetime import timedelta
 from pathlib import Path
 from corsheaders.defaults import default_headers
-
+from dotenv import load_dotenv
+load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -164,3 +166,7 @@ GOOGLE_REDIRECT_URI = "http://localhost:5173/auth/google/callback"
 GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar"
 ]
+# --- STRIPE CONFIGURATION ---
+STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
