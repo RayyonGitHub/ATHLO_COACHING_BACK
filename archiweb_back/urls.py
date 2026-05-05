@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-
+from core.views_shop import ProduitViewSet, CategorieProduitViewSet
 from core import views
 
 
@@ -74,7 +74,8 @@ router.register(r'seances', SeanceViewSet, basename='seance')
 router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'notifications-athlete', AthleteNotificationViewSet, basename='notification-athlete')
-
+router.register(r'shop/products', ProduitViewSet, basename='shop-product')
+router.register(r'shop/categories', CategorieProduitViewSet, basename='shop-category')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
@@ -158,6 +159,7 @@ urlpatterns = [
     path('api/athlete/integrations/strava/disconnect/', strava_disconnect, name='strava-disconnect'),
     path('api/athlete/integrations/strava/sync/', strava_sync, name='strava-sync'),
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
+
 ]
 
 if settings.DEBUG:

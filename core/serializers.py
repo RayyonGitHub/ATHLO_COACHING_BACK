@@ -8,6 +8,11 @@ from .models import (
     Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
 )
 
+# Cherchez la ligne "from .models import ..."
+from .models import (
+    Client, Coach, Produit, CategorieProduit,  # <-- AJOUTEZ CategorieProduit ICI
+    Commande, LigneCommande
+)
 # --- PROFILS ---
 class ClientSerializer(serializers.ModelSerializer):
     class Meta:
@@ -393,7 +398,26 @@ class DevisSerializer(serializers.ModelSerializer):
     
     from .models import ActiviteExterne
 
+# --- NOUVEAU : Serializer pour les activités Strava/Garmin ---
 class ActiviteExterneSerializer(serializers.ModelSerializer):
     class Meta:
         model = ActiviteExterne
+        fields = '__all__'
+
+# --- NOUVEAU : Serializer pour la Boutique ---
+class ProduitSerializer(serializers.ModelSerializer):
+    # Permet d'afficher le nom de la catégorie au lieu de l'ID
+    categorie_nom = serializers.ReadOnlyField(source='categorie.nom')
+    # Permet d'afficher le nom du coach qui vend le produit
+    coach_nom = serializers.ReadOnlyField(source='coach.user.username')
+
+    class Meta:
+        model = Produit
+        fields = '__all__'
+        # Le coach est défini automatiquement par la vue, pas par l'utilisateur
+        read_only_fields = ['coach']
+
+class CategorieProduitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CategorieProduit
         fields = '__all__'
