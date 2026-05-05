@@ -6,7 +6,11 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from core.views_shop import ProduitViewSet, CategorieProduitViewSet
 from core import views
-
+from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
+from core.views import CreateOrderView
+# core/urls.py
+# Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
+from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 
 from core.views_integrations import (
     get_external_activities,
@@ -76,6 +80,8 @@ router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'notifications-athlete', AthleteNotificationViewSet, basename='notification-athlete')
 router.register(r'shop/products', ProduitViewSet, basename='shop-product')
 router.register(r'shop/categories', CategorieProduitViewSet, basename='shop-category')
+router.register(r'nutrition/recipes', RecetteViewSet, basename='nutrition-recipe')
+router.register(r'nutrition/plans', PlanNutritionnelViewSet, basename='nutrition-plan')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
@@ -159,7 +165,8 @@ urlpatterns = [
     path('api/athlete/integrations/strava/disconnect/', strava_disconnect, name='strava-disconnect'),
     path('api/athlete/integrations/strava/sync/', strava_sync, name='strava-sync'),
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
-
+    path('api/shop/orders/', CreateOrderView.as_view(), name='create-order'),
+   
 ]
 
 if settings.DEBUG:

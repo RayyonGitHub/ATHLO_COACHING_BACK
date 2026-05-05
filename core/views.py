@@ -25,11 +25,12 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework_simplejwt.tokens import RefreshToken
 
+
 from .models import (
     Client, Coach, Exercice, Programme, Seance,
     SeanceExercice, Performance, Indisponibilite,
     Inscription, Notification, NotificationAthlete, Salle, Avis,
-    ClientInvitation
+    ClientInvitation,   Commande, LigneCommande, Produit
 )
 from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
@@ -1359,3 +1360,38 @@ class ProspectCoachDetailView(APIView):
         )
         serializer = ProspectCoachDetailSerializer(coach)
         return Response(serializer.data)
+class CreateOrderView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            # On récupère le profil athlète de l'utilisateur connecté
+            client = request.user.client_profile
+            data = request.data
+
+            # 1. Création de la commande principale
+            commande = Commande.objects.create(
+                client=client,
+                adresse_livraison=data.get('adresse_livraison', ''),
+                total=data.get('total', 0),
+                statut='EN_ATTENTE'
+            )
+
+            # 2. Création des lignes de commande
+            lignes_data = data.get('lignes', [])
+            for ligne in lignes_data:
+                produit = Produit.objects.get(id=ligne['produit_id'])
+                LigneCommande.objects.create(
+                    commande=commande,
+                    produit=produit,
+                    quantite=ligne['quantite'],
+                    prix_unitaire=ligne['prix_unitaire']
+                )
+
+            return Response(
+                {"message": "Commande créée avec succès", "id": commande.id}, 
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
