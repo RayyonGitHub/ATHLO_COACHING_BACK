@@ -6,8 +6,11 @@ from .models import (
     ClientInvitation,
     Exercice,
     NotificationAthlete,
+    PlanNutritionnel,
     Produit,
     Programme,
+    Recette,
+    Recette,
     Seance,
     SeanceExercice,
     Inscription,
@@ -16,6 +19,8 @@ from .models import (
     Message,
     MessageAttachment,
     Performance,
+    Commande,
+    LigneCommande
 )
 
 # Profils
@@ -29,6 +34,9 @@ admin.site.register(Programme)
 admin.site.register(Seance)
 admin.site.register(SeanceExercice)
 admin.site.register(Performance)
+
+admin.site.register(Recette)
+admin.site.register(PlanNutritionnel)
 
 
 @admin.register(Inscription)
@@ -80,3 +88,16 @@ class ProduitAdmin(admin.ModelAdmin):
     list_display = ('nom', 'coach', 'prix', 'stock', 'est_actif')
     list_filter = ('type_produit', 'categorie', 'est_actif')
     search_fields = ('nom', 'coach__user__username')
+    
+# --- AJOUTEZ CECI À LA TOUTE FIN DE VOTRE FICHIER admin.py ---
+
+@admin.register(Commande)
+class CommandeAdmin(admin.ModelAdmin):
+    # Remplacement de 'date_creation' par 'date_commande' (le vrai nom dans models.py)
+    list_display = ('id', 'client', 'statut', 'total', 'date_commande')
+    list_filter = ('statut', 'date_commande')
+    search_fields = ('client__nom', 'client__prenom', 'id')
+
+@admin.register(LigneCommande)
+class LigneCommandeAdmin(admin.ModelAdmin):
+    list_display = ('commande', 'produit', 'quantite', 'prix_unitaire')

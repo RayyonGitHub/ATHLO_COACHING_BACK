@@ -438,14 +438,14 @@ class ActiviteExterne(models.Model):
    # --- À METTRE DANS core/models.py ---
 
 class CategorieProduit(models.Model):
-    nom = models.CharField(max_length=100)
-    slug = models.SlugField(unique=True)
+        nom = models.CharField(max_length=100)
+        slug = models.SlugField(unique=True)
 
-    class Meta:
+class Meta:
         verbose_name = "Catégorie de Produit"
         verbose_name_plural = "Catégories de Produits"
 
-    def __str__(self):
+def __str__(self):
         return self.nom
 
 
@@ -461,7 +461,7 @@ class Produit(models.Model):
     prix = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     image = models.ImageField(upload_to='products/', blank=True, null=True)
     # ICI : On pointe bien vers le modèle CategorieProduit
-    categorie = models.ForeignKey(CategorieProduit, on_delete=models.SET_NULL, null=True, related_name='produits')
+    categorie = models.ForeignKey('CategorieProduit', on_delete=models.SET_NULL, null=True, related_name='produits')
     type_produit = models.CharField(max_length=20, choices=TYPE_CHOICES, default='PHYSIQUE')
     
     # Gestion des stocks
@@ -503,3 +503,48 @@ class LigneCommande(models.Model):
 
     def __str__(self):
         return f"{self.quantite} x {self.produit.nom}"
+    
+    # --- MODULE NUTRITION ---
+
+class Recette(models.Model):
+    CATEGORIE_CHOICES = [
+        ('Petit-déjeuner', 'Petit-déjeuner'),
+        ('Déjeuner', 'Déjeuner'),
+        ('Dîner', 'Dîner'),
+        ('Collation', 'Collation'),
+        ('Pre-workout', 'Pre-workout'),
+    ]
+    
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='recettes')
+    nom = models.CharField(max_length=200)
+    type = models.CharField(max_length=50, choices=CATEGORIE_CHOICES, default='Petit-déjeuner')
+    
+    # Macros nutritionnels
+    calories = models.PositiveIntegerField(default=0)
+    proteines = models.PositiveIntegerField(default=0)
+    glucides = models.PositiveIntegerField(default=0)
+    lipides = models.PositiveIntegerField(default=0)
+    
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.nom} ({self.coach.user.username})"
+
+
+class PlanNutritionnel(models.Model):
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='plans_nutritionnels')
+    titre = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    prix = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    image = models.ImageField(upload_to='plans_nutrition/', null=True, blank=True)
+    
+    # La fameuse table de liaison créée automatiquement par Django !
+    recettes = models.ManyToManyField(Recette, related_name='plans')
+    
+    # Lien vers la boutique : on relie le plan à un produit numérique
+    produit = models.OneToOneField(Produit, on_delete=models.SET_NULL, null=True, blank=True, related_name='plan_source')
+    
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Plan: {self.titre} ({self.coach.user.username})"
