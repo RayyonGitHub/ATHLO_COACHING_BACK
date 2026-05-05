@@ -4,9 +4,9 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-from core.views_shop import ProduitViewSet, CategorieProduitViewSet
+from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopPaymentIntentView
 from core import views
-
+from core.views_stripe import stripe_webhook
 
 from core.views_integrations import (
     get_external_activities,
@@ -164,7 +164,8 @@ urlpatterns = [
 
     # --- À AJOUTER DANS urlpatterns ---
     path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
-
+    path('api/shop/create-intent/', CreateShopPaymentIntentView.as_view(), name='shop-create-intent'),
+    path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
 ]
 
 if settings.DEBUG:

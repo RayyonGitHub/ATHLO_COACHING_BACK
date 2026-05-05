@@ -69,13 +69,7 @@ class InvitationCheckoutPaySerializer(serializers.Serializer):
     invitation_token = serializers.CharField()
     email = serializers.EmailField()
     phone = serializers.CharField(max_length=20, allow_blank=True, required=False)
-
-    card_number = serializers.CharField()
-    expiry = serializers.CharField()
-    cvc = serializers.CharField()
-    cardholder_name = serializers.CharField()
-
-    billing_address = serializers.DictField(required=False)
+    
 
 
 class InvitationSetPasswordSerializer(serializers.Serializer):
