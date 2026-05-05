@@ -4,26 +4,17 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.core.validators import FileExtensionValidator
+from django.core.validators import FileExtensionValidator, MinValueValidator
 import uuid
-<<<<<<< HEAD
-
-from django.db import models
-from django.core.validators import MinValueValidator
-=======
-from django.utils import timezone
->>>>>>> paiement-back
 
 # --- Validateurs ---
 def validate_non_negatif(value):
     if value <= 0:
         raise ValidationError("Cette valeur doit être supérieure à 0.")
 
-
 def validate_date_pas_dans_le_futur(value):
     if value and value > timezone.now().date():
         raise ValidationError("La date de naissance ne peut pas être dans le futur.")
-
 
 # --- Modèles Profils ---
 class Coach(models.Model):
@@ -33,7 +24,6 @@ class Coach(models.Model):
     offres_tarifs = models.JSONField(default=dict, blank=True)
     specialite = models.CharField(max_length=100, blank=True)
     ville = models.CharField(max_length=100, blank=True)
-
     google_access_token = models.TextField(blank=True, null=True)
     google_refresh_token = models.TextField(blank=True, null=True)
     google_token_expires_at = models.DateTimeField(blank=True, null=True)
@@ -75,7 +65,8 @@ class Client(models.Model):
     est_archive = models.BooleanField(default=False, verbose_name="Archivé")
     tags = models.CharField(max_length=50, default="Standard", blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
-# --- NOUVEAUX CHAMPS : Intégrations Sportives (Strava & Garmin) ---
+
+    # --- NOUVEAUX CHAMPS : Intégrations Sportives (Strava & Garmin) ---
     strava_access_token = models.TextField(blank=True, null=True)
     strava_refresh_token = models.TextField(blank=True, null=True)
     strava_token_expires_at = models.DateTimeField(blank=True, null=True)
@@ -84,6 +75,7 @@ class Client(models.Model):
     garmin_access_token = models.TextField(blank=True, null=True)
     garmin_refresh_token = models.TextField(blank=True, null=True)
     garmin_token_expires_at = models.DateTimeField(blank=True, null=True)
+
     def __str__(self):
         return f"{self.prenom} {self.nom}"
 
@@ -95,7 +87,6 @@ class ClientInvitation(models.Model):
         ('pack', 'Pack 10 séances'),
         ('abonnement', 'Abonnement mensuel'),
     ]
-
     STATUS_CHOICES = [
         ('pending', 'En attente de paiement'),
         ('paid', 'Payé'),
@@ -107,19 +98,14 @@ class ClientInvitation(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='client_invitations')
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='payment_invitations')
     token = models.CharField(max_length=64, unique=True, default=uuid.uuid4, editable=False)
-
     email = models.EmailField()
     phone = models.CharField(max_length=20, blank=True)
-
     offer_type = models.CharField(max_length=20, choices=OFFER_TYPES, default='abonnement')
     offer_label = models.CharField(max_length=100, default='Abonnement mensuel')
     amount = models.FloatField(default=0.0)
-
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_status = models.CharField(max_length=20, default='pending')
-
     card_last4 = models.CharField(max_length=4, blank=True)
-
     expires_at = models.DateTimeField()
     paid_at = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField(null=True, blank=True)
@@ -234,7 +220,7 @@ class Inscription(models.Model):
                 seance=self.seance,
                 statut__in=['CONFIRME', 'PRESENT', 'ABSENT']
             ).exclude(pk=self.pk).count()
-
+            
             if inscrits_confirmes >= self.seance.capacite_max:
                 raise ValidationError(
                     f"La capacité maximale ({self.seance.capacite_max} participants) est atteinte. Impossible de confirmer cette inscription."
@@ -300,7 +286,6 @@ class Conversation(models.Model):
     class Meta:
         ordering = ['-updated_at', '-created_at']
 
-
 class ConversationParticipant(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='participants')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_conversations')
@@ -309,7 +294,6 @@ class ConversationParticipant(models.Model):
 
     class Meta:
         unique_together = ('conversation', 'user')
-
 
 class Message(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
@@ -321,10 +305,8 @@ class Message(models.Model):
     class Meta:
         ordering = ['created_at']
 
-
 def message_attachment_upload_path(instance, filename):
     return f"messages/conversation_{instance.message.conversation.id}/{filename}"
-
 
 class MessageAttachment(models.Model):
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='attachments')
@@ -343,7 +325,6 @@ class NotificationAthlete(models.Model):
         ('OBJECTIF', 'Objectif'),
         ('INFO', 'Information')
     ]
-
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='notifications_athlete', null=True, blank=True)
     message = models.TextField()
     type = models.CharField(max_length=20, choices=TYPES, default='INFO')
@@ -358,20 +339,17 @@ class NotificationAthlete(models.Model):
 def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
     if not created:
         return
-
     if not instance.programme_id:
         return
-
     athlete = getattr(instance.programme, 'athlete', None)
     if not athlete:
         return
-
+        
     inscription, nouvelle = Inscription.objects.get_or_create(
         seance=instance,
         client=athlete,
         defaults={'statut': 'CONFIRME'}
     )
-
     if nouvelle:
         NotificationAthlete.objects.create(
             client=athlete,
@@ -382,31 +360,27 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
 
 class Devis(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')
-
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField()
     telephone = models.CharField(max_length=20, blank=True)
-
     age = models.IntegerField(null=True, blank=True)
     taille = models.IntegerField(null=True, blank=True)
     poids = models.FloatField(null=True, blank=True)
-
     niveau_activite = models.CharField(max_length=50, blank=True)
     type_entrainement = models.CharField(max_length=50, blank=True)
     objectif_sportif = models.TextField(blank=True)
     budget = models.CharField(max_length=50, blank=True)
     pathologies_blessures = models.TextField(blank=True)
     message = models.TextField(blank=True)
-
     statut = models.CharField(max_length=20, default="en_attente")
     date_creation = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.prenom} {self.nom} - {self.coach}"
-    
-<<<<<<< HEAD
-    # --- Données Sportives Importées (Strava / Garmin) ---
+
+
+# --- Données Sportives Importées (Strava / Garmin) ---
 class ActiviteExterne(models.Model):
     PLATEFORMES = [
         ('STRAVA', 'Strava'),
@@ -433,15 +407,7 @@ class ActiviteExterne(models.Model):
 
     def __str__(self):
         return f"{self.nom} - {self.plateforme} ({self.client.prenom} {self.client.nom})"
-    
-    class CategorieProduit(models.Model):
-     nom = models.CharField(max_length=100)
-     slug = models.SlugField(unique=True)
 
-    def __str__(self):
-        return self.nom
-
-   # --- À METTRE DANS core/models.py ---
 
 class CategorieProduit(models.Model):
     nom = models.CharField(max_length=100)
@@ -460,13 +426,11 @@ class Produit(models.Model):
         ('PHYSIQUE', 'Produit Physique'),
         ('NUMERIQUE', 'Produit Numérique (PDF, etc.)'),
     ]
-
-    coach = models.ForeignKey('Coach', on_delete=models.CASCADE, related_name='produits_boutique')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='produits_boutique')
     nom = models.CharField(max_length=200)
     description = models.TextField()
     prix = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     image = models.ImageField(upload_to='products/', blank=True, null=True)
-    # ICI : On pointe bien vers le modèle CategorieProduit
     categorie = models.ForeignKey(CategorieProduit, on_delete=models.SET_NULL, null=True, related_name='produits')
     type_produit = models.CharField(max_length=20, choices=TYPE_CHOICES, default='PHYSIQUE')
     
@@ -483,22 +447,39 @@ class Produit(models.Model):
 
 
 class Commande(models.Model):
-    STATUT_CHOICES = [
-        ('EN_ATTENTE', 'En attente'),
-        ('PAYEE', 'Payée'),
+    STATUS_CHOICES = [
+        ('PENDING', 'En attente'), 
+        ('PAID', 'Payée'), 
+        ('FAILED', 'Échouée'),
         ('EXPEDIEE', 'Expédiée'),
         ('LIVREE', 'Livrée'),
         ('ANNULEE', 'Annulée'),
     ]
-
-    client = models.ForeignKey('Client', on_delete=models.CASCADE, related_name='commandes')
+    
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='commandes')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='ventes', null=True, blank=True)
+    order_number = models.CharField(max_length=40, unique=True, default=uuid.uuid4)
+    
+    # Détails de l'offre (Stripe / Prospect)
+    offre_label = models.CharField(max_length=150, blank=True, null=True)
+    offre_type = models.CharField(max_length=50, blank=True, null=True) # 'seance', 'pack', 'abonnement'
+    
+    # Financier
+    montant_ht = models.FloatField(default=0.0)
+    tva_taux = models.FloatField(default=20.0)
+    montant_ttc = models.FloatField(default=0.0)
+    
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
     date_commande = models.DateTimeField(auto_now_add=True)
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='EN_ATTENTE')
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    
+    # Référence Stripe
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True)
+
+    # Logistique (Boutique)
     adresse_livraison = models.TextField(blank=True, null=True)
 
     def __str__(self):
-        return f"Commande {self.id} - {self.client.user.username}"
+        return f"Commande {self.order_number} - {self.client}"
 
 
 class LigneCommande(models.Model):
@@ -509,34 +490,7 @@ class LigneCommande(models.Model):
 
     def __str__(self):
         return f"{self.quantite} x {self.produit.nom}"
-=======
 
-
-class Commande(models.Model):
-    STATUS_CHOICES = [('PENDING', 'En attente'), ('PAID', 'Payée'), ('FAILED', 'Échouée')]
-    
-    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='commandes')
-    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='ventes')
-    order_number = models.CharField(max_length=40, unique=True, default=uuid.uuid4)
-    
-    # Détails de l'offre
-    offre_label = models.CharField(max_length=150)
-    offre_type = models.CharField(max_length=50) # 'seance', 'pack', 'abonnement'
-    
-    # Financier
-    montant_ht = models.FloatField()
-    tva_taux = models.FloatField(default=20.0)
-    montant_ttc = models.FloatField()
-    
-    # État
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
-    date_commande = models.DateTimeField(auto_now_add=True)
-    
-    # Référence Stripe (pour plus tard)
-    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True)
-
-    def __str__(self):
-        return f"Commande {self.order_number} - {self.client}"
 
 class Facture(models.Model):
     commande = models.OneToOneField(Commande, on_delete=models.CASCADE, related_name='facture')
@@ -547,7 +501,6 @@ class Facture(models.Model):
     def __str__(self):
         return f"Facture {self.numero_facture}"
 
-    # --- Modifier la méthode save dans la classe Facture ---
     def save(self, *args, **kwargs):
         if not self.numero_facture:
             self.numero_facture = f"FAC-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:5].upper()}"
@@ -559,4 +512,3 @@ class Facture(models.Model):
             from .invoice_utils import generate_invoice_pdf
             generate_invoice_pdf(self)
             super().save(update_fields=['pdf_file'])
->>>>>>> paiement-back
