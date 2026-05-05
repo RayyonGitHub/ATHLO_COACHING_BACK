@@ -7,6 +7,8 @@ from django.dispatch import receiver
 from django.core.validators import FileExtensionValidator
 import uuid
 
+from django.db import models
+from django.core.validators import MinValueValidator
 
 # --- Validateurs ---
 def validate_non_negatif(value):
@@ -425,3 +427,79 @@ class ActiviteExterne(models.Model):
 
     def __str__(self):
         return f"{self.nom} - {self.plateforme} ({self.client.prenom} {self.client.nom})"
+    
+    class CategorieProduit(models.Model):
+     nom = models.CharField(max_length=100)
+     slug = models.SlugField(unique=True)
+
+    def __str__(self):
+        return self.nom
+
+   # --- À METTRE DANS core/models.py ---
+
+class CategorieProduit(models.Model):
+    nom = models.CharField(max_length=100)
+    slug = models.SlugField(unique=True)
+
+    class Meta:
+        verbose_name = "Catégorie de Produit"
+        verbose_name_plural = "Catégories de Produits"
+
+    def __str__(self):
+        return self.nom
+
+
+class Produit(models.Model):
+    TYPE_CHOICES = [
+        ('PHYSIQUE', 'Produit Physique'),
+        ('NUMERIQUE', 'Produit Numérique (PDF, etc.)'),
+    ]
+
+    coach = models.ForeignKey('Coach', on_delete=models.CASCADE, related_name='produits_boutique')
+    nom = models.CharField(max_length=200)
+    description = models.TextField()
+    prix = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    image = models.ImageField(upload_to='products/', blank=True, null=True)
+    # ICI : On pointe bien vers le modèle CategorieProduit
+    categorie = models.ForeignKey(CategorieProduit, on_delete=models.SET_NULL, null=True, related_name='produits')
+    type_produit = models.CharField(max_length=20, choices=TYPE_CHOICES, default='PHYSIQUE')
+    
+    # Gestion des stocks
+    stock = models.PositiveIntegerField(default=0)
+    est_actif = models.BooleanField(default=True)
+    
+    # Logistique
+    peut_etre_livre = models.BooleanField(default=True)
+    peut_etre_retire = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.nom} (par {self.coach.user.username})"
+
+
+class Commande(models.Model):
+    STATUT_CHOICES = [
+        ('EN_ATTENTE', 'En attente'),
+        ('PAYEE', 'Payée'),
+        ('EXPEDIEE', 'Expédiée'),
+        ('LIVREE', 'Livrée'),
+        ('ANNULEE', 'Annulée'),
+    ]
+
+    client = models.ForeignKey('Client', on_delete=models.CASCADE, related_name='commandes')
+    date_commande = models.DateTimeField(auto_now_add=True)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='EN_ATTENTE')
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    adresse_livraison = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Commande {self.id} - {self.client.user.username}"
+
+
+class LigneCommande(models.Model):
+    commande = models.ForeignKey(Commande, on_delete=models.CASCADE, related_name='lignes')
+    produit = models.ForeignKey(Produit, on_delete=models.PROTECT)
+    quantite = models.PositiveIntegerField(default=1)
+    prix_unitaire = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.quantite} x {self.produit.nom}"

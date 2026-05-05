@@ -1,10 +1,12 @@
 from django.contrib import admin
 from .models import (
+    CategorieProduit,
     Coach,
     Client,
     ClientInvitation,
     Exercice,
     NotificationAthlete,
+    Produit,
     Programme,
     Seance,
     SeanceExercice,
@@ -65,3 +67,16 @@ class MessageAttachmentAdmin(admin.ModelAdmin):
 
 
 admin.site.register(NotificationAthlete)
+# --- NOUVEAU : Gestion des catégories de la boutique ---
+@admin.register(CategorieProduit)
+class CategorieProduitAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'slug')
+    # Ceci remplit automatiquement le champ 'slug' en tapant le nom 
+    # (ex: "Programmes PDF" -> "programmes-pdf")
+    prepopulated_fields = {'slug': ('nom',)} 
+
+@admin.register(Produit)
+class ProduitAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'coach', 'prix', 'stock', 'est_actif')
+    list_filter = ('type_produit', 'categorie', 'est_actif')
+    search_fields = ('nom', 'coach__user__username')
