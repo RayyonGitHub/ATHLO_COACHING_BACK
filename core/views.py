@@ -1379,7 +1379,8 @@ class CreateOrderView(APIView):
                 client=client,
                 adresse_livraison=data.get('adresse_livraison', ''),
                 total=data.get('total', 0),
-                statut='EN_ATTENTE'
+                statut='PENDING',
+
             )
 
             # 2. Création des lignes de commande

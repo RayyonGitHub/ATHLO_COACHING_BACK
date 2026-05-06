@@ -91,13 +91,13 @@ class ProduitAdmin(admin.ModelAdmin):
     
 # --- AJOUTEZ CECI À LA TOUTE FIN DE VOTRE FICHIER admin.py ---
 
+# core/admin.py
 @admin.register(Commande)
 class CommandeAdmin(admin.ModelAdmin):
-    # Remplacement de 'date_creation' par 'date_commande' (le vrai nom dans models.py)
-    list_display = ('id', 'client', 'statut', 'total', 'date_commande')
-    list_filter = ('statut', 'date_commande')
-    search_fields = ('client__nom', 'client__prenom', 'id')
-
+    # On remplace 'statut' par 'status' et 'total' par 'montant_ttc'
+    list_display = ('order_number', 'client', 'status', 'montant_ttc', 'date_commande')
+    list_filter = ('status',)
+    search_fields = ('order_number', 'client__user__last_name')
 @admin.register(LigneCommande)
 class LigneCommandeAdmin(admin.ModelAdmin):
     list_display = ('commande', 'produit', 'quantite', 'prix_unitaire')
