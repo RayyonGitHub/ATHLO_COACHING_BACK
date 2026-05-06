@@ -4,13 +4,14 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-from core.views_shop import ProduitViewSet, CategorieProduitViewSet
+from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopPaymentIntentView
 from core import views
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views import CreateOrderView
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
+from core.views_stripe import stripe_webhook
 
 from core.views_integrations import (
     get_external_activities,
@@ -159,6 +160,7 @@ urlpatterns = [
     path('api/messages/conversations/<int:conversation_id>/members/<int:user_id>/', ConversationMemberDeleteView.as_view(), name='message-conversation-member-delete'),
     path('api/messages/conversations/<int:conversation_id>/messages/', ConversationMessagesView.as_view(), name='message-conversation-messages'),
     path('api/messages/conversations/<int:conversation_id>/read/', ConversationReadView.as_view(), name='message-conversation-read'),
+
 # Intégrations Sportives (Strava / Garmin) pour l'Athlète
     path('api/athlete/integrations/status/', integrations_status, name='integrations-status'),
     path('api/athlete/integrations/strava/connect/', strava_connect, name='strava-connect'),
@@ -167,6 +169,12 @@ urlpatterns = [
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
     path('api/shop/orders/', CreateOrderView.as_view(), name='create-order'),
    
+
+
+    # --- À AJOUTER DANS urlpatterns ---
+    path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
+    path('api/shop/create-intent/', CreateShopPaymentIntentView.as_view(), name='shop-create-intent'),
+    path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
 ]
 
 if settings.DEBUG:
