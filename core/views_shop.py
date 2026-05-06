@@ -36,9 +36,9 @@ class ProduitViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-class CategorieProduitViewSet(viewsets.ReadOnlyModelViewSet):
+class CategorieProduitViewSet(viewsets.ModelViewSet): # On change ReadOnlyModelViewSet par ModelViewSet
     """
-    Simple vue pour permettre au front de lister les catégories.
+    Vue pour lister et CRÉER les catégories depuis le front.
     """
     queryset = CategorieProduit.objects.all()
     serializer_class = CategorieProduitSerializer 
