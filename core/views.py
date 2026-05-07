@@ -208,7 +208,28 @@ class ClientViewSet(viewsets.ModelViewSet):
 
         client = serializer.save(coach=coach_profile, user=user)
 
-        offer_type, offer_label, amount = self._get_default_offer_for_invitation(coach_profile)
+        # ------------------------------------------------------------------
+        # --- NOUVELLE LOGIQUE : CHOIX DU TARIF DEPUIS LE FRONTEND ---
+        # ------------------------------------------------------------------
+        selected_offer_type = self.request.data.get('offer_type')
+        raw_offres = coach_profile.offres_tarifs if isinstance(coach_profile.offres_tarifs, dict) else {}
+
+        if selected_offer_type == 'abonnement':
+            offer_type = 'abonnement'
+            offer_label = 'Abonnement mensuel'
+            amount = float(raw_offres.get('abonnement', 0) or 0)
+        elif selected_offer_type == 'pack':
+            offer_type = 'pack'
+            offer_label = 'Pack 10 séances'
+            amount = float(raw_offres.get('pack', 0) or 0)
+        elif selected_offer_type == 'seance':
+            offer_type = 'seance'
+            offer_label = 'Séance unique'
+            amount = float(raw_offres.get('seance', 0) or 0)
+        else:
+            # Comportement par défaut si le front n'envoie rien (ou en cas d'erreur)
+            offer_type, offer_label, amount = self._get_default_offer_for_invitation(coach_profile)
+        # ------------------------------------------------------------------
 
         invitation = ClientInvitation.objects.create(
             coach=coach_profile,
@@ -246,7 +267,7 @@ class ClientViewSet(viewsets.ModelViewSet):
             coach=coach_profile,
             seance=None,
             type='INFO',
-            message=f"Invitation de paiement envoyée à {prenom} {nom} ({email})."
+            message=f"Invitation de paiement envoyée à {prenom} {nom} ({email}) pour {offer_label} ({amount}€)."
         )
 
 
