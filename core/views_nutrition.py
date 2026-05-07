@@ -36,7 +36,7 @@ class PlanNutritionnelViewSet(viewsets.ModelViewSet):
             # On cherche toutes les lignes de commande de cet athlète
             # appartenant à une commande qui est "PAYEE"
             lignes_payees = athlete.commandes.filter(
-                statut='PAYEE'
+                status='PAID'
             ).values_list('lignes__produit_id', flat=True)
             print(f"DEBUG: Produits achetés par l'athlète : {list(lignes_payees)}") # <--- Ajoute ça
             
