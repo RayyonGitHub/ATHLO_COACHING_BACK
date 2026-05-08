@@ -24,6 +24,7 @@ class Coach(models.Model):
     offres_tarifs = models.JSONField(default=dict, blank=True)
     specialite = models.CharField(max_length=100, blank=True)
     ville = models.CharField(max_length=100, blank=True)
+    salles = models.ManyToManyField('Salle', related_name='coachs_affilies', blank=True)
     google_access_token = models.TextField(blank=True, null=True)
     google_refresh_token = models.TextField(blank=True, null=True)
     google_token_expires_at = models.DateTimeField(blank=True, null=True)

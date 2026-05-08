@@ -17,9 +17,10 @@ class ClientSerializer(serializers.ModelSerializer):
         read_only_fields = ['coach', 'user']
 
 class CoachSerializer(serializers.ModelSerializer):
+    salles = serializers.PrimaryKeyRelatedField(many=True, queryset=Salle.objects.all(), required=False)
     class Meta:
         model = Coach
-        fields = ['id', 'specialites_tags', 'offres_tarifs', 'telephone', 'specialite', 'ville']
+        fields = ['id', 'specialites_tags', 'offres_tarifs', 'telephone', 'specialite', 'ville', 'salles']
 
 # --- SERIALIZER PUBLIC POUR LES PROSPECTS ---
 class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
