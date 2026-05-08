@@ -79,6 +79,9 @@ def _get_public_programmes(coach):
     return result
 
 
+def _get_salles(coach):
+    return [{"id": s.id, "nom": s.nom, "ville": s.ville} for s in coach.salles.all()]
+
 def _serialize_public_coach(coach):
     offres = _normalize_offres(coach.offres_tarifs)
     moyenne_note = coach.avis.aggregate(avg=Avg('note'))['avg'] or 0
@@ -99,6 +102,7 @@ def _serialize_public_coach(coach):
         "avis": avis_count,
         "tarifs": offres,
         "programmes_gratuits": _get_public_programmes(coach),
+        "salles": _get_salles(coach), # <-- NOUVEAU
         "image": None,
     }
 
@@ -154,11 +158,13 @@ class PublicCoachListView(APIView):
     def get(self, request):
         ville = (request.query_params.get('ville') or '').strip().lower()
         specialite = (request.query_params.get('specialite') or '').strip().lower()
+        salle_nom = (request.query_params.get('salle') or '').strip().lower() # <-- NOUVEAU FILTRE
         note_min = request.query_params.get('note_min')
         prix_max = request.query_params.get('prix_max')
         type_offre = (request.query_params.get('type_offre') or 'tous').strip().lower()
 
-        coaches = Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees').all()
+        # On ajoute 'salles' dans le prefetch_related pour optimiser les perfs
+        coaches = Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees', 'salles').all()
 
         results = []
         for coach in coaches:
@@ -170,6 +176,12 @@ class PublicCoachListView(APIView):
             if specialite:
                 coach_specs = [s.lower() for s in serialized.get('specialites', [])]
                 if specialite not in coach_specs:
+                    continue
+                    
+            # --- FILTRAGE PAR SALLE ---
+            if salle_nom:
+                coach_salles = [s['nom'].lower() for s in serialized.get('salles', [])]
+                if not any(salle_nom in s for s in coach_salles):
                     continue
 
             if note_min:

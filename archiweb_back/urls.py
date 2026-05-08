@@ -12,6 +12,7 @@ from core.views import CreateOrderView
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views_stripe import stripe_webhook
+from core.views_admin import admin_salle_list_create, admin_salle_delete
 
 from core.views_integrations import (
     get_external_activities,
@@ -35,14 +36,7 @@ from core.views_auth import (
     forgot_password_view,
     reset_password_view,
 )
-from core.views_admin import (
-    admin_login_view,
-    admin_coach_list,
-    admin_athlete_list,
-    admin_stats_view,
-    admin_toggle_coach_status,
-    admin_delete_athlete
-)
+from core import views_admin
 from core.views import export_coach_calendar, remove_participant, update_inscription_status
 from core.views_messages import (
     AvailableContactsView,
@@ -86,7 +80,8 @@ router.register(r'nutrition/plans', PlanNutritionnelViewSet, basename='nutrition
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
-
+    path('api/admin/salles/', admin_salle_list_create, name='admin-salles'),
+    path('api/admin/salles/<int:pk>/', admin_salle_delete, name='admin-salle-delete'),
     # Authentification Publique
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
@@ -127,13 +122,18 @@ urlpatterns = [
     # Tracking de Performance
     path('api/athlete/performance/record/', PerformanceCreateView.as_view(), name='record-performance'),
 
-    # Super Admin
-    path('api/admin/login/', admin_login_view, name='admin-login'),
-    path('api/admin/stats/', admin_stats_view, name='admin-stats'),
-    path('api/admin/coachs/', admin_coach_list, name='admin-coach-list'),
-    path('api/admin/athletes/', admin_athlete_list, name='admin-athlete-list'),
-    path('api/admin/athletes/<int:pk>/delete/', admin_delete_athlete, name='admin-athlete-delete'),
-    path('api/admin/coachs/<int:pk>/status/', admin_toggle_coach_status, name='admin-coach-status'),
+    # Super Admin - Étape 1
+    path('api/admin/login/', views_admin.admin_login_view, name='admin-login'),
+    path('api/admin/stats/', views_admin.admin_stats_view, name='admin-stats'),
+    path('api/admin/coachs/', views_admin.admin_coach_list, name='admin-coach-list'),
+    path('api/admin/athletes/', views_admin.admin_athlete_list, name='admin-athlete-list'),
+    path('api/admin/athletes/<int:pk>/delete/', views_admin.admin_delete_athlete, name='admin-athlete-delete'),
+    
+    # Routes génériques Utilisateurs
+    path('api/admin/users/<int:pk>/update/', views_admin.admin_update_user, name='admin-update-user'),
+    path('api/admin/users/<int:pk>/change-password/', views_admin.admin_change_password, name='admin-change-password'),
+    path('api/admin/users/<int:pk>/force-logout/', views_admin.admin_force_logout, name='admin-force-logout'),
+    path('api/admin/users/<int:pk>/toggle-status/', views_admin.admin_toggle_user_status, name='admin-toggle-status'),
 
     # Calendrier coach et athlète
     path('api/calendar/coach/<int:coach_id>/', CoachCalendarView.as_view(), name='coach-calendar'),
@@ -169,7 +169,10 @@ urlpatterns = [
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
     path('api/shop/orders/', CreateOrderView.as_view(), name='create-order'),
    
-
+    path('api/admin/users/<int:pk>/update/', views_admin.admin_update_user, name='admin-update-user'),
+    path('api/admin/users/<int:pk>/change-password/', views_admin.admin_change_password, name='admin-change-password'),
+    path('api/admin/users/<int:pk>/force-logout/', views_admin.admin_force_logout, name='admin-force-logout'),
+    path('api/admin/users/<int:pk>/toggle-status/', views_admin.admin_toggle_user_status, name='admin-toggle-status'),
 
     # --- À AJOUTER DANS urlpatterns ---
     path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
