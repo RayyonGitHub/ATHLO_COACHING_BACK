@@ -5,12 +5,13 @@ from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Coach, Client, Salle, Commande, Devis
+from .models import Coach, Client, Salle, Commande, Devis, Exercice, CategorieProduit
 from .permissions import IsSystemAdmin
 from .serializers import SalleSerializer
 from django.db.models import Sum, Avg, Count
 from django.utils import timezone
 from datetime import timedelta
+from django.utils.text import slugify
 # --- LOGIN ADMIN ---
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -138,7 +139,86 @@ def admin_salle_delete(request, pk):
         return Response({"message": "Salle supprimée"}, status=204)
     except Salle.DoesNotExist:
         return Response({"error": "Salle introuvable"}, status=404)
+# --- CATALOGUE : EXERCICES ---
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_exercice_list_create(request):
+    if request.method == 'GET':
+        exercices = Exercice.objects.all().order_by('-id')
+        data = [{
+            "id": e.id,
+            "nom": e.nom,
+            "description": e.description,
+            "categorie": e.categorie,
+            "muscle_principal": e.muscle_principal,
+            "video_url": e.video_url
+        } for e in exercices]
+        return Response(data)
     
+    elif request.method == 'POST':
+        data = request.data
+        ex = Exercice.objects.create(
+            nom=data.get('nom'),
+            description=data.get('description', ''),
+            categorie=data.get('categorie', 'FORCE'),
+            muscle_principal=data.get('muscle_principal', ''),
+            video_url=data.get('video_url', '')
+        )
+        return Response({"id": ex.id, "nom": ex.nom}, status=201)
+
+@api_view(['PUT', 'DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_exercice_detail(request, pk):
+    try:
+        ex = Exercice.objects.get(pk=pk)
+    except Exercice.DoesNotExist:
+        return Response({"error": "Introuvable"}, status=404)
+        
+    if request.method == 'PUT':
+        data = request.data
+        ex.nom = data.get('nom', ex.nom)
+        ex.description = data.get('description', ex.description)
+        ex.categorie = data.get('categorie', ex.categorie)
+        ex.muscle_principal = data.get('muscle_principal', ex.muscle_principal)
+        ex.video_url = data.get('video_url', ex.video_url)
+        ex.save()
+        return Response({"message": "Mis à jour"})
+        
+    elif request.method == 'DELETE':
+        ex.delete()
+        return Response({"message": "Supprimé"}, status=204)
+
+# --- CATALOGUE : CATEGORIES BOUTIQUE ---
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_category_list_create(request):
+    if request.method == 'GET':
+        cats = CategorieProduit.objects.all().order_by('-id')
+        data = [{"id": c.id, "nom": c.nom, "slug": c.slug} for c in cats]
+        return Response(data)
+        
+    elif request.method == 'POST':
+        nom = request.data.get('nom')
+        if not nom: return Response({"error": "Nom requis"}, status=400)
+        slug = slugify(nom)
+        if CategorieProduit.objects.filter(slug=slug).exists():
+            slug = f"{slug}-{CategorieProduit.objects.count() + 1}"
+        cat = CategorieProduit.objects.create(nom=nom, slug=slug)
+        return Response({"id": cat.id, "nom": cat.nom, "slug": cat.slug}, status=201)
+
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_category_delete(request, pk):
+    try:
+        cat = CategorieProduit.objects.get(pk=pk)
+        cat.delete()
+        return Response(status=204)
+    except CategorieProduit.DoesNotExist:
+        return Response(status=404)    
 # --- GESTION UTILISATEURS ---
 @api_view(['PATCH'])
 @authentication_classes([JWTAuthentication])
@@ -288,3 +368,45 @@ def admin_force_logout(request, pk):
     # Pour l'instant, on retourne un succès simple. 
     # (L'invalidation réelle nécessite la table de blacklistage JWT)
     return Response({"message": "Déconnecté"})
+
+@api_view(['GET', 'PATCH'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_me_view(request):
+    user = request.user
+    if request.method == 'GET':
+        return Response({
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+        })
+    
+    elif request.method == 'PATCH':
+        data = request.data
+        user.first_name = data.get('first_name', user.first_name)
+        user.last_name = data.get('last_name', user.last_name)
+        user.email = data.get('email', user.email)
+        user.save()
+        return Response({
+            "message": "Profil mis à jour",
+            "user": {
+                "name": f"{user.first_name} {user.last_name}".strip(),
+                "email": user.email
+            }
+        })
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_change_my_password(request):
+    user = request.user
+    old_password = request.data.get('old_password')
+    new_password = request.data.get('new_password')
+    
+    if not user.check_password(old_password):
+        return Response({"error": "Ancien mot de passe incorrect"}, status=400)
+    
+    user.set_password(new_password)
+    user.save()
+    return Response({"message": "Mot de passe modifié avec succès"})

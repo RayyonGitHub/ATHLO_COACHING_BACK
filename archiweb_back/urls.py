@@ -13,7 +13,7 @@ from core.views import CreateOrderView
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views_stripe import stripe_webhook
 from core.views_admin import admin_salle_list_create, admin_salle_delete
-from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list
+from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list, admin_exercice_list_create, admin_exercice_detail, admin_category_list_create, admin_category_delete, admin_me_view, admin_change_my_password
 from core.views_integrations import (
     get_external_activities,
     integrations_status,
@@ -85,6 +85,12 @@ urlpatterns = [
     path('api/admin/prospects/', admin_prospect_list, name='admin-prospects'),
     path('api/admin/prospects/<int:pk>/', admin_delete_prospect, name='admin-delete-prospect'),
     path('api/admin/finance/', admin_finance_list, name='admin-finance'),
+    path('api/admin/exercices/', admin_exercice_list_create, name='admin-exercices'),
+    path('api/admin/exercices/<int:pk>/', admin_exercice_detail, name='admin-exercice-detail'),
+    path('api/admin/categories/', admin_category_list_create, name='admin-categories'),
+    path('api/admin/categories/<int:pk>/', admin_category_delete, name='admin-category-delete'),
+    path('api/admin/me/', admin_me_view, name='admin-me'),
+path('api/admin/me/change-password/', admin_change_my_password, name='admin-change-my-password'),
     # Authentification Publique
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
