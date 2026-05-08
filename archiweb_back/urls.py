@@ -13,7 +13,7 @@ from core.views import CreateOrderView
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views_stripe import stripe_webhook
 from core.views_admin import admin_salle_list_create, admin_salle_delete
-
+from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list
 from core.views_integrations import (
     get_external_activities,
     integrations_status,
@@ -82,6 +82,9 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('api/admin/salles/', admin_salle_list_create, name='admin-salles'),
     path('api/admin/salles/<int:pk>/', admin_salle_delete, name='admin-salle-delete'),
+    path('api/admin/prospects/', admin_prospect_list, name='admin-prospects'),
+    path('api/admin/prospects/<int:pk>/', admin_delete_prospect, name='admin-delete-prospect'),
+    path('api/admin/finance/', admin_finance_list, name='admin-finance'),
     # Authentification Publique
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
