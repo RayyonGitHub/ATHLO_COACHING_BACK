@@ -19,7 +19,7 @@ DEBUG = True
 STRAVA_CLIENT_ID = "235231"
 STRAVA_CLIENT_SECRET = "3856cd52dde7005dce6fc3a233b26d7793a5164c"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['10.8.252.9', 'localhost', '127.0.0.1']
 
 # --- Application definition ---
 
