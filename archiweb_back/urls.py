@@ -14,7 +14,7 @@ from core.views_responsable import ResponsableDashboardStatsView, ResponsablePla
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views_stripe import stripe_webhook
 from core.views_admin import admin_salle_list_create, admin_salle_delete
-from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list, admin_exercice_list_create, admin_exercice_detail, admin_category_list_create, admin_category_delete, admin_me_view, admin_change_my_password
+from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list, admin_exercice_list_create, admin_exercice_detail, admin_category_list_create, admin_category_delete, admin_me_view, admin_change_my_password, admin_responsable_list_create, admin_responsable_delete
 from core.views_integrations import (
     get_external_activities,
     integrations_status,
@@ -138,6 +138,8 @@ path('api/admin/me/change-password/', admin_change_my_password, name='admin-chan
     path('api/admin/coachs/', views_admin.admin_coach_list, name='admin-coach-list'),
     path('api/admin/athletes/', views_admin.admin_athlete_list, name='admin-athlete-list'),
     path('api/admin/athletes/<int:pk>/delete/', views_admin.admin_delete_athlete, name='admin-athlete-delete'),
+    path('api/admin/responsables/', admin_responsable_list_create, name='admin-responsables'),
+    path('api/admin/responsables/<int:pk>/', admin_responsable_delete, name='admin-responsable-delete'),
     
     # Routes génériques Utilisateurs
     path('api/admin/users/<int:pk>/update/', views_admin.admin_update_user, name='admin-update-user'),
