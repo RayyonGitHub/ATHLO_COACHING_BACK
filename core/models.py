@@ -140,7 +140,12 @@ class Exercice(models.Model):
 
     def __str__(self):
         return f"{self.nom} ({self.get_categorie_display()})"
-
+class Salle(models.Model):
+    nom = models.CharField(max_length=150)
+    adresse = models.CharField(max_length=255)
+    ville = models.CharField(max_length=100)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
 
 class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
@@ -154,10 +159,18 @@ class Programme(models.Model):
     def __str__(self):
         return self.titre
 
+class ResponsableSalle(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='responsable_profile')
+    salle = models.ForeignKey(Salle, on_delete=models.CASCADE, related_name='responsables')
+    telephone = models.CharField(max_length=20, blank=True)
 
+    def __str__(self):
+        return f"{self.user.username} - Responsable {self.salle.nom}"
+    
 class Seance(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='seances_creees')
     programme = models.ForeignKey(Programme, on_delete=models.CASCADE, related_name='seances', null=True, blank=True)
+    salle = models.ForeignKey(Salle, on_delete=models.SET_NULL, related_name='seances', null=True, blank=True)
     titre = models.CharField(max_length=150, verbose_name="Titre de la séance")
     jour_prevu = models.DateField(null=True, blank=True)
     heure_debut = models.TimeField(null=True, blank=True)
@@ -170,7 +183,7 @@ class Seance(models.Model):
     ressenti_client = models.PositiveIntegerField(null=True, blank=True)
     notes_client = models.TextField(blank=True)
     google_event_id = models.CharField(max_length=255, blank=True, null=True)
-
+ 
     class Meta:
         ordering = ['jour_prevu', 'heure_debut', 'ordre']
 
@@ -240,16 +253,7 @@ class Indisponibilite(models.Model):
     heure_fin = models.TimeField()
     est_conge = models.BooleanField(default=False)
     google_event_id = models.CharField(max_length=255, blank=True, null=True)
-
-
-class Salle(models.Model):
-    nom = models.CharField(max_length=150)
-    adresse = models.CharField(max_length=255)
-    ville = models.CharField(max_length=100)
-    latitude = models.FloatField(null=True, blank=True)
-    longitude = models.FloatField(null=True, blank=True)
-
-
+    
 class Avis(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='avis')
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
