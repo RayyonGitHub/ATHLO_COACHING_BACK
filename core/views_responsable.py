@@ -4,7 +4,8 @@ from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from .models import ResponsableSalle, Seance, Inscription, Commande
 from datetime import datetime
-from django.db.models import Sum
+from django.db.models import Sum, Count
+from django.db.models.functions import ExtractHour
 class ResponsableDashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -110,6 +111,7 @@ class ResponsablePlanningView(APIView):
             "date": date_cible.isoformat(),
             "seances": planning_data
         })
+        
 class ResponsableCoachSupervisionView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -184,4 +186,76 @@ class ResponsableCoachSupervisionView(APIView):
                 "total_coachs": coachs.count()
             },
             "coachs": coach_data
+        })
+class ResponsableStatistiquesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            responsable = request.user.responsable_profile
+            salle = responsable.salle
+        except Exception:
+            return Response({"error": "Vous n'êtes pas assigné comme responsable de salle."}, status=403)
+
+        aujourd_hui = timezone.now().date()
+        debut_mois = aujourd_hui.replace(day=1)
+
+        # 1. Toutes les séances du mois pour cette salle
+        seances_mois = Seance.objects.filter(salle=salle, jour_prevu__gte=debut_mois, jour_prevu__lte=aujourd_hui)
+
+        # 2. Fréquentation (inscriptions confirmées ou présentes)
+        inscriptions_mois = Inscription.objects.filter(
+            seance__in=seances_mois, 
+            statut__in=['CONFIRME', 'PRESENT']
+        )
+        frequentation_totale = inscriptions_mois.count()
+
+        # 3. Taux de remplissage global du mois
+        capacite_totale = sum(s.capacite_max or 0 for s in seances_mois)
+        taux_remplissage = (frequentation_totale / capacite_totale * 100) if capacite_totale > 0 else 0
+
+        # 4. Heures de pointe (On groupe par heure de début et on compte le nombre de séances)
+        # Note: Pour SQLite/PostgreSQL, ExtractHour extrait l'heure.
+        heures_data = seances_mois.annotate(
+            heure=ExtractHour('heure_debut')
+        ).values('heure').annotate(
+            nb_seances=Count('id')
+        ).order_by('-nb_seances')[:3]
+        
+        heures_pointe = [
+            {"heure": f"{h['heure']}h00", "nb_seances": h['nb_seances']} 
+            for h in heures_data if h['heure'] is not None
+        ]
+
+        # 5. Top 5 des coachs les plus actifs (par nombre de séances)
+        top_coachs_data = seances_mois.values(
+            'coach__user__first_name', 
+            'coach__user__last_name'
+        ).annotate(
+            total_seances=Count('id')
+        ).order_by('-total_seances')[:5]
+
+        top_coachs = [
+            {
+                "nom": f"{c['coach__user__first_name']} {c['coach__user__last_name']}",
+                "seances": c['total_seances']
+            } for c in top_coachs_data if c['coach__user__first_name']
+        ]
+
+        # 6. Revenus générés ce mois-ci par les coachs de la salle
+        from .models import Coach
+        coachs_salle = Coach.objects.filter(salles=salle)
+        revenus_mois = Commande.objects.filter(
+            coach__in=coachs_salle, 
+            status='PAID', 
+            date_commande__gte=debut_mois
+        ).aggregate(total=Sum('montant_ttc'))['total'] or 0
+
+        return Response({
+            "mois": debut_mois.strftime("%B %Y"),
+            "frequentation": frequentation_totale,
+            "taux_remplissage": round(taux_remplissage, 1),
+            "revenus_mois": float(revenus_mois),
+            "heures_pointe": heures_pointe,
+            "top_coachs": top_coachs
         })
