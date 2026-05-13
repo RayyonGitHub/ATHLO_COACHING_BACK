@@ -8,7 +8,7 @@ from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopP
 from core import views
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views import CreateOrderView
-from core.views_responsable import ResponsableDashboardStatsView, ResponsablePlanningView
+from core.views_responsable import ResponsableDashboardStatsView, ResponsablePlanningView, ResponsableCoachSupervisionView
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
@@ -192,6 +192,7 @@ path('api/admin/me/change-password/', admin_change_my_password, name='admin-chan
    # Dashboard Responsable Salle
     path('api/responsable/dashboard-stats/', ResponsableDashboardStatsView.as_view(), name='responsable-dashboard-stats'),
     path('api/responsable/planning/', ResponsablePlanningView.as_view(), name='responsable-planning'),
+    path('api/responsable/supervision-coachs/', ResponsableCoachSupervisionView.as_view(), name='responsable-supervision-coachs'),
 ]
 
 if settings.DEBUG:
