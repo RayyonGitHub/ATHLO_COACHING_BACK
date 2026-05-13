@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Coach, Client, Salle, Commande, Devis, Exercice, CategorieProduit
+from .models import Coach, Client, Salle, Commande, Devis, Exercice, CategorieProduit, ResponsableSalle
 from .permissions import IsSystemAdmin
 from .serializers import SalleSerializer
 from django.db.models import Sum, Avg, Count
@@ -410,3 +410,79 @@ def admin_change_my_password(request):
     user.set_password(new_password)
     user.save()
     return Response({"message": "Mot de passe modifié avec succès"})
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_responsable_list_create(request):
+    if request.method == 'GET':
+        # On récupère les responsables avec les infos user et salle liées pour optimiser
+        responsables = ResponsableSalle.objects.select_related('user', 'salle').all().order_by('-id')
+        data = [{
+            "id": r.id,
+            "user_id": r.user.id,
+            "name": f"{r.user.first_name} {r.user.last_name}".strip() or r.user.email,
+            "first_name": r.user.first_name,
+            "last_name": r.user.last_name,
+            "email": r.user.email,
+            "telephone": r.telephone,
+            "salle_id": r.salle.id,
+            "salle_nom": r.salle.nom,
+            "status": "Active" if r.user.is_active else "Inactive"
+        } for r in responsables]
+        return Response(data)
+
+    elif request.method == 'POST':
+        # Création d'un nouveau responsable
+        email = request.data.get('email')
+        password = request.data.get('password')
+        first_name = request.data.get('first_name', '')
+        last_name = request.data.get('last_name', '')
+        telephone = request.data.get('telephone', '')
+        salle_id = request.data.get('salle_id')
+
+        if not email or not password or not salle_id:
+            return Response({"error": "L'email, le mot de passe et la salle sont requis."}, status=400)
+
+        # Vérifier si l'utilisateur existe déjà
+        if User.objects.filter(email=email).exists() or User.objects.filter(username=email).exists():
+            return Response({"error": "Un utilisateur avec cet email existe déjà."}, status=400)
+
+        try:
+            salle = Salle.objects.get(id=salle_id)
+        except Salle.DoesNotExist:
+            return Response({"error": "La salle sélectionnée est introuvable."}, status=404)
+
+        # Création du User
+        user = User.objects.create_user(
+            username=email, 
+            email=email, 
+            password=password, 
+            first_name=first_name, 
+            last_name=last_name
+        )
+        
+        # Création du profil ResponsableSalle
+        responsable = ResponsableSalle.objects.create(
+            user=user, 
+            salle=salle, 
+            telephone=telephone
+        )
+
+        return Response({
+            "id": responsable.id,
+            "name": f"{user.first_name} {user.last_name}".strip(),
+            "email": user.email,
+            "salle_nom": salle.nom
+        }, status=201)
+
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_responsable_delete(request, pk):
+    try:
+        responsable = ResponsableSalle.objects.get(pk=pk)
+        # Supprimer le User supprimera en cascade le ResponsableSalle
+        responsable.user.delete()
+        return Response({"message": "Responsable supprimé avec succès."}, status=204)
+    except ResponsableSalle.DoesNotExist:
+        return Response({"error": "Responsable introuvable."}, status=404)
