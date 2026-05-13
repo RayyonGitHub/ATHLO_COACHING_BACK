@@ -8,6 +8,7 @@ from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopP
 from core import views
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views import CreateOrderView
+from core.views_responsable import ResponsableDashboardStatsView
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
@@ -187,6 +188,9 @@ path('api/admin/me/change-password/', admin_change_my_password, name='admin-chan
     path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
     path('api/shop/create-intent/', CreateShopPaymentIntentView.as_view(), name='shop-create-intent'),
     path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
+    
+    # Dashboard Responsable Salle
+    path('api/responsable/dashboard-stats/', ResponsableDashboardStatsView.as_view(), name='responsable-dashboard-stats'),
 ]
 
 if settings.DEBUG:

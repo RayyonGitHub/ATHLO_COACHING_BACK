@@ -20,7 +20,7 @@ from .models import (
     MessageAttachment,
     Performance,
     Commande,
-    LigneCommande
+    LigneCommande, Salle, ResponsableSalle
 )
 
 # Profils
@@ -38,7 +38,8 @@ admin.site.register(Performance)
 admin.site.register(Recette)
 admin.site.register(PlanNutritionnel)
 
-
+admin.site.register(Salle)
+admin.site.register(ResponsableSalle)
 @admin.register(Inscription)
 class InscriptionAdmin(admin.ModelAdmin):
     list_display = ('client', 'seance', 'statut', 'date_inscription')

@@ -84,7 +84,9 @@ def login_view(request):
             role = 'coach'
         elif hasattr(user, 'client_profile'):
             role = 'athlete'
-        else:
+        elif hasattr(user, 'responsable_profile'): # AJOUTEZ CECI
+            role = 'responsable'
+        elif hasattr(user, 'prospect_profile'): # Ou votre logique actuelle pour prospect
             role = 'prospect'
 
         return Response({
