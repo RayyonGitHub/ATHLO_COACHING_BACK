@@ -6,6 +6,10 @@ from .models import ResponsableSalle, Seance, Inscription, Commande
 from datetime import datetime
 from django.db.models import Sum, Count
 from django.db.models.functions import ExtractHour
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.contrib.auth.models import User
+
 class ResponsableDashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -69,6 +73,7 @@ class ResponsableDashboardStatsView(APIView):
                 "revenus_generes": revenus
             }
         })
+
 class ResponsablePlanningView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -187,6 +192,7 @@ class ResponsableCoachSupervisionView(APIView):
             },
             "coachs": coach_data
         })
+
 class ResponsableStatistiquesView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -259,3 +265,59 @@ class ResponsableStatistiquesView(APIView):
             "heures_pointe": heures_pointe,
             "top_coachs": top_coachs
         })
+
+# --- NOUVELLES VUES POUR LES PARAMÈTRES (Format APIView) ---
+
+class ResponsableMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            responsable = request.user.responsable_profile
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=404)
+
+        return Response({
+            "id": responsable.id,
+            "first_name": request.user.first_name,
+            "last_name": request.user.last_name,
+            "email": request.user.email,
+            "telephone": responsable.telephone,
+            "salle_nom": responsable.salle.nom
+        })
+
+    def patch(self, request):
+        try:
+            responsable = request.user.responsable_profile
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=404)
+        
+        data = request.data
+        user = request.user
+        
+        # Mise à jour des infos User
+        user.first_name = data.get('first_name', user.first_name)
+        user.last_name = data.get('last_name', user.last_name)
+        user.email = data.get('email', user.email)
+        user.save()
+        
+        # Mise à jour des infos Profil
+        responsable.telephone = data.get('telephone', responsable.telephone)
+        responsable.save()
+        
+        return Response({"message": "Profil mis à jour avec succès"})
+
+class ResponsableChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        
+        if not user.check_password(old_password):
+            return Response({"error": "Ancien mot de passe incorrect"}, status=400)
+        
+        user.set_password(new_password)
+        user.save()
+        return Response({"message": "Mot de passe modifié avec succès"})
