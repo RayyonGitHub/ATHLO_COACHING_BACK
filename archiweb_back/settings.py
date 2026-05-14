@@ -6,18 +6,20 @@ from datetime import timedelta
 from pathlib import Path
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
+
 load_dotenv()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-p8v$q9ja4v1ia3iiy2ymg*qv&7pw3c5p7be+7u4gtxptji)thq'
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-STRAVA_CLIENT_ID = "235231"
-STRAVA_CLIENT_SECRET = "3856cd52dde7005dce6fc3a233b26d7793a5164c"
+STRAVA_CLIENT_ID = os.getenv('STRAVA_CLIENT_ID')
+STRAVA_CLIENT_SECRET = os.getenv('STRAVA_CLIENT_SECRET')
 
 ALLOWED_HOSTS = ['10.8.252.9', 'localhost', '127.0.0.1']
 
@@ -147,8 +149,8 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-EMAIL_HOST_USER = 'mcevik6738@gmail.com'
-EMAIL_HOST_PASSWORD = 'quyq ctlw robd kzgc'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
@@ -160,12 +162,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 FRONTEND_URL = 'http://localhost:5173'
 
 # --- GOOGLE CALENDAR ---
-GOOGLE_CLIENT_ID = "1085275017199-gtp77vbkp5uc6llt34l32t9iploc43ts.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 GOOGLE_REDIRECT_URI = "http://localhost:5173/auth/google/callback"
 GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar"
 ]
+
 # --- STRIPE CONFIGURATION ---
 STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')

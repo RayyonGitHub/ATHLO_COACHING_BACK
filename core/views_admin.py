@@ -12,6 +12,9 @@ from django.db.models import Sum, Avg, Count
 from django.utils import timezone
 from datetime import timedelta
 from django.utils.text import slugify
+from django.core.mail import send_mail
+from django.conf import settings
+from django.utils.crypto import get_random_string
 # --- LOGIN ADMIN ---
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -432,16 +435,17 @@ def admin_responsable_list_create(request):
         return Response(data)
 
     elif request.method == 'POST':
-        # Création d'un nouveau responsable
         email = request.data.get('email')
-        password = request.data.get('password')
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         telephone = request.data.get('telephone', '')
         salle_id = request.data.get('salle_id')
 
-        if not email or not password or not salle_id:
-            return Response({"error": "L'email, le mot de passe et la salle sont requis."}, status=400)
+        # --- MODIFICATION : Génération automatique d'un mot de passe de 10 caractères ---
+        password = get_random_string(length=10)
+
+        if not email or not salle_id:
+            return Response({"error": "L'email et la salle sont requis."}, status=400)
 
         # Vérifier si l'utilisateur existe déjà
         if User.objects.filter(email=email).exists() or User.objects.filter(username=email).exists():
@@ -468,13 +472,37 @@ def admin_responsable_list_create(request):
             telephone=telephone
         )
 
+        # Envoi de l'email avec le mot de passe généré
+        try:
+            sujet = "Bienvenue sur ATHLO - Votre compte Responsable"
+            message = (
+                f"Bonjour {first_name},\n\n"
+                f"Votre compte responsable a été créé avec succès pour la salle {salle.nom}.\n\n"
+                f"Voici vos identifiants de connexion :\n"
+                f"Email : {email}\n"
+                f"Mot de passe provisoire : {password}\n\n"
+                f"Lien de connexion : {settings.FRONTEND_URL}/login\n\n"
+                f"Nous vous conseillons de modifier votre mot de passe dès votre première connexion.\n\n"
+                f"L'équipe ATHLO"
+            )
+
+            send_mail(
+                subject=sujet,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=True, 
+            )
+        except Exception as e:
+            print(f"Erreur lors de l'envoi de l'email au responsable : {e}")
+
         return Response({
             "id": responsable.id,
             "name": f"{user.first_name} {user.last_name}".strip(),
             "email": user.email,
             "salle_nom": salle.nom
         }, status=201)
-
+        
 @api_view(['DELETE'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsSystemAdmin])
