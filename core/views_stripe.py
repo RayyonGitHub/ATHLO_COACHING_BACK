@@ -116,8 +116,8 @@ class CreatePlatformSubscriptionView(APIView):
                     'checkout_type': 'platform_subscription',
                     'coach_id': coach.id
                 },
-                success_url=settings.FRONTEND_URL + '/coach/settings?session_id={CHECKOUT_SESSION_ID}&success=true',
-                cancel_url=settings.FRONTEND_URL + '/coach/settings?canceled=true',
+                success_url=settings.FRONTEND_URL + '/parametres?session_id={CHECKOUT_SESSION_ID}&success=true',
+                cancel_url=settings.FRONTEND_URL + '/parametres?canceled=true',
             )
             return Response({'checkout_url': checkout_session.url})
         except Exception as e:
@@ -150,8 +150,8 @@ class CreateStripeConnectAccountView(APIView):
         try:
             account_link = stripe.AccountLink.create(
                 account=coach.stripe_account_id,
-                refresh_url=f"{front_url}/coach/settings?stripe_connect=refresh",
-                return_url=f"{front_url}/coach/settings?stripe_connect=success",
+                refresh_url=f"{front_url}/parametres?stripe_connect=refresh",
+                return_url=f"{front_url}/parametres?stripe_connect=success",
                 type="account_onboarding",
             )
             return Response({'checkout_url': account_link.url})

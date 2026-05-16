@@ -18,10 +18,15 @@ class ClientSerializer(serializers.ModelSerializer):
 
 class CoachSerializer(serializers.ModelSerializer):
     salles = serializers.PrimaryKeyRelatedField(many=True, queryset=Salle.objects.all(), required=False)
+    
     class Meta:
         model = Coach
-        fields = ['id', 'specialites_tags', 'offres_tarifs', 'telephone', 'specialite', 'ville', 'salles']
-
+        fields = [
+            'id', 'specialites_tags', 'offres_tarifs', 'telephone', 
+            'specialite', 'ville', 'salles', 
+            'platform_plan', 'stripe_account_id'  # <-- Ajout des champs Stripe
+        ]
+        read_only_fields = ['platform_plan', 'stripe_account_id'] # <-- Sécurité : empêche la modification manuelle via le front
 # --- SERIALIZER PUBLIC POUR LES PROSPECTS ---
 class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
     duree = serializers.SerializerMethodField()
