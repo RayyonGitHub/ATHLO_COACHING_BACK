@@ -163,9 +163,12 @@ class PublicCoachListView(APIView):
         prix_max = request.query_params.get('prix_max')
         type_offre = (request.query_params.get('type_offre') or 'tous').strip().lower()
 
-        # On ajoute 'salles' dans le prefetch_related pour optimiser les perfs
-        coaches = Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees', 'salles').all()
-
+       # On exclut les coachs qui n'ont pas configuré leur compte Stripe Connect
+        coaches = Coach.objects.exclude(
+            stripe_account_id__isnull=True
+        ).exclude(
+            stripe_account_id__exact=''
+        ).select_related('user').prefetch_related('avis', 'programmes_crees', 'salles')
         results = []
         for coach in coaches:
             serialized = _serialize_public_coach(coach)
@@ -233,6 +236,11 @@ class ProspectCheckoutPayView(APIView):
             return Response({"message": "Type d'offre invalide."}, status=status.HTTP_400_BAD_REQUEST)
 
         coach = get_object_or_404(Coach.objects.select_related('user'), id=coach_id)
+        if not coach.stripe_account_id:
+            return Response(
+                {"message": "Ce coach n'a pas encore configuré ses paiements. La transaction est impossible."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         offres = _normalize_offres(coach.offres_tarifs)
         amount = offres.get(offer_type)
 
