@@ -238,17 +238,29 @@ class ProspectCheckoutPayView(APIView):
 
         try:
             # 1. Création de l'intention de paiement Stripe
-            intent = stripe.PaymentIntent.create(
-                amount=int(amount * 100), # Stripe fonctionne en centimes
-                currency='eur',
-                metadata={
+           fee_amount = 0
+           if coach.platform_plan == 'free':
+            fee_amount = int((amount * 100) * 0.10) # 10% de commission
+
+            intent_kwargs = {
+                "amount": int(amount * 100),
+                "currency": 'eur',
+                "metadata": {
                     'checkout_type': 'prospect',
                     'user_id': user.id,
                     'coach_id': coach.id,
                     'offer_type': offer_type,
                     'offer_label': self.OFFER_LABELS[offer_type]
                 }
-            )
+            }
+
+            if coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": coach.stripe_account_id
+                }
+
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
 
             # 2. Création de ton token d'activation (CRUCIAL pour ne pas casser ton flux !)
             token_payload = {
@@ -445,14 +457,27 @@ class InvitationCheckoutPreviewView(APIView):
         try:
             # 1. Création de l'intention Stripe
             import stripe
-            intent = stripe.PaymentIntent.create(
-                amount=int(invitation.amount * 100),
-                currency='eur',
-                metadata={
+            
+            fee_amount = 0
+            if invitation.coach.platform_plan == 'free':
+                fee_amount = int((invitation.amount * 100) * 0.10) # 10% de commission
+
+            intent_kwargs = {
+                "amount": int(invitation.amount * 100),
+                "currency": 'eur',
+                "metadata": {
                     'checkout_type': 'invitation',
                     'invitation_token': invitation.token
                 }
-            )
+            }
+
+            if invitation.coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": invitation.coach.stripe_account_id
+                }
+
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
 
             # 2. On renvoie les données + le client_secret
             return Response({
@@ -497,15 +522,27 @@ class InvitationCheckoutPayView(APIView):
 
         try:
             # Création de l'intention de paiement Stripe
-            intent = stripe.PaymentIntent.create(
-                amount=int(invitation.amount * 100),
-                currency='eur',
-                metadata={
+            fee_amount = 0
+            if invitation.coach.platform_plan == 'free':
+                fee_amount = int((invitation.amount * 100) * 0.10) # 10% de commission
+
+            intent_kwargs = {
+                "amount": int(invitation.amount * 100),
+                "currency": 'eur',
+                "metadata": {
                     'checkout_type': 'invitation',
                     'invitation_token': invitation.token
                 }
-            )
+            }
 
+            if invitation.coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": invitation.coach.stripe_account_id
+                }
+
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
+            
             return Response({
                 "client_secret": intent.client_secret,
                 "coach": _serialize_public_coach(invitation.coach),

@@ -18,7 +18,20 @@ def validate_date_pas_dans_le_futur(value):
 
 # --- Modèles Profils ---
 class Coach(models.Model):
+    PLAN_CHOICES = [
+        ('free', 'Gratuit (Freemium)'),
+        ('premium', 'Premium (Abonnement)')
+    ]
+    
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='coach_profile')
+    
+    # --- Champs Stripe & Abonnement ---
+    platform_plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default='free')
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
+    stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
+    stripe_account_id = models.CharField(max_length=255, blank=True, null=True, help_text="ID du compte Stripe Connect du coach")
+    # ----------------------------------
+    
     telephone = models.CharField(max_length=15, verbose_name="Téléphone", blank=True)
     specialites_tags = models.JSONField(default=list, blank=True)
     offres_tarifs = models.JSONField(default=dict, blank=True)
@@ -28,7 +41,6 @@ class Coach(models.Model):
     google_access_token = models.TextField(blank=True, null=True)
     google_refresh_token = models.TextField(blank=True, null=True)
     google_token_expires_at = models.DateTimeField(blank=True, null=True)
-
     def __str__(self):
         return f"{self.user.username} - Coach"
 
