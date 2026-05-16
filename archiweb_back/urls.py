@@ -91,7 +91,7 @@ urlpatterns = [
     path('api/admin/categories/', admin_category_list_create, name='admin-categories'),
     path('api/admin/categories/<int:pk>/', admin_category_delete, name='admin-category-delete'),
     path('api/admin/me/', admin_me_view, name='admin-me'),
-path('api/admin/me/change-password/', admin_change_my_password, name='admin-change-my-password'),
+    path('api/admin/me/change-password/', admin_change_my_password, name='admin-change-my-password'),
     # Authentification Publique
     path('api/auth/register/', register_view, name='register'),
     path('api/auth/login/', login_view, name='login'),
@@ -137,7 +137,7 @@ path('api/admin/me/change-password/', admin_change_my_password, name='admin-chan
     path('api/admin/stats/', views_admin.admin_stats_view, name='admin-stats'),
     path('api/admin/coachs/', views_admin.admin_coach_list, name='admin-coach-list'),
     path('api/admin/athletes/', views_admin.admin_athlete_list, name='admin-athlete-list'),
-    path('api/admin/athletes/<int:pk>/delete/', views_admin.admin_delete_athlete, name='admin-athlete-delete'),
+    path('api/admin/athletes/<int:pk>/', views_admin.admin_delete_athlete, name='admin-athlete-delete'),
     path('api/admin/responsables/', admin_responsable_list_create, name='admin-responsables'),
     path('api/admin/responsables/<int:pk>/', admin_responsable_delete, name='admin-responsable-delete'),
     

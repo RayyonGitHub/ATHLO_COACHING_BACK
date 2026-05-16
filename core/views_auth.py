@@ -79,7 +79,7 @@ def login_view(request):
             return Response({'message': 'Email ou mot de passe incorrect'}, status=401)
 
         refresh = RefreshToken.for_user(user)
-
+        role = 'prospect'
         if hasattr(user, 'coach_profile'):
             role = 'coach'
         elif hasattr(user, 'client_profile'):
