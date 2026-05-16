@@ -76,7 +76,7 @@ class CreateShopPaymentIntentView(APIView):
             offre_type="shop",
             status='PENDING'
         )
-
+        
         # 2. On ajoute les produits (Lignes de commande)
         for item in items:
             produit = Produit.objects.get(id=item['id'])
@@ -97,13 +97,26 @@ class CreateShopPaymentIntentView(APIView):
         commande.save()
 
         # 3. Création de l'intention Stripe liée à cette Commande
-        intent = stripe.PaymentIntent.create(
-            amount=int(total_amount * 100),
-            currency='eur',
-            metadata={
+        fee_amount = 0
+        if premier_produit.coach.platform_plan == 'free':
+            fee_amount = int((total_amount * 100) * 0.10) # 10% de commission
+
+        intent_kwargs = {
+            "amount": int(total_amount * 100),
+            "currency": 'eur',
+            "metadata": {
                 'checkout_type': 'shop_order',
                 'commande_id': commande.id,
             }
-        )
+        }
+
+        # Transfert de l'argent au coach si un compte Stripe Connect est configuré
+        if premier_produit.coach.stripe_account_id:
+            intent_kwargs["application_fee_amount"] = fee_amount
+            intent_kwargs["transfer_data"] = {
+                "destination": premier_produit.coach.stripe_account_id
+            }
+
+        intent = stripe.PaymentIntent.create(**intent_kwargs)
 
         return Response({"client_secret": intent.client_secret}, status=200)
