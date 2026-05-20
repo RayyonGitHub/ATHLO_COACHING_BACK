@@ -24,9 +24,9 @@ class CoachSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'specialites_tags', 'offres_tarifs', 'telephone', 
             'specialite', 'ville', 'salles', 
-            'platform_plan', 'stripe_account_id'  # <-- Ajout des champs Stripe
+            'platform_plan', 'stripe_account_id', 'stripe_onboarding_complete'
         ]
-        read_only_fields = ['platform_plan', 'stripe_account_id'] # <-- Sécurité : empêche la modification manuelle via le front
+        read_only_fields = ['platform_plan', 'stripe_account_id', 'stripe_onboarding_complete'] # <-- Sécurité : empêche la modification manuelle via le front
 # --- SERIALIZER PUBLIC POUR LES PROSPECTS ---
 class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
     duree = serializers.SerializerMethodField()
