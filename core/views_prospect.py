@@ -164,10 +164,9 @@ class PublicCoachListView(APIView):
         type_offre = (request.query_params.get('type_offre') or 'tous').strip().lower()
 
        # On exclut les coachs qui n'ont pas configuré leur compte Stripe Connect
-        coaches = Coach.objects.exclude(
-            stripe_account_id__isnull=True
-        ).exclude(
-            stripe_account_id__exact=''
+        # On filtre uniquement les coachs ayant COMPLÉTÉ l'onboarding Stripe
+        coaches = Coach.objects.filter(
+            stripe_onboarding_complete=True
         ).select_related('user').prefetch_related('avis', 'programmes_crees', 'salles')
         results = []
         for coach in coaches:

@@ -84,6 +84,18 @@ def stripe_webhook(request):
             coach.save()
         except Coach.DoesNotExist:
             pass
+    # 4. Vérification de la complétion du compte Stripe Connect
+    elif event_dict['type'] == 'account.updated':
+        account = event_dict['data']['object']
+        # Si details_submitted est True, le coach a fini de remplir ses infos
+        if account.get('details_submitted') == True:
+            try:
+                coach = Coach.objects.get(stripe_account_id=account.get('id'))
+                if not coach.stripe_onboarding_complete:
+                    coach.stripe_onboarding_complete = True
+                    coach.save()
+            except Coach.DoesNotExist:
+                pass
 
     return HttpResponse(status=200)
 class CreatePlatformSubscriptionView(APIView):

@@ -30,6 +30,7 @@ class Coach(models.Model):
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
     stripe_account_id = models.CharField(max_length=255, blank=True, null=True, help_text="ID du compte Stripe Connect du coach")
+    stripe_onboarding_complete = models.BooleanField(default=False)
     # ----------------------------------
     
     telephone = models.CharField(max_length=15, verbose_name="Téléphone", blank=True)
