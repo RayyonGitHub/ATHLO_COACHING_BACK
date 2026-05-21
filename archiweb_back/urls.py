@@ -23,7 +23,7 @@ from core.views_integrations import (
      strava_sync # <-- NOUVEAU
 )
 from core.views import (
-    ClientViewSet, CoachMeView, AthleteMeView, ProspectMeView,
+    ClientViewSet, CoachMeView, CoachAvailableSallesView, AthleteMeView, ProspectMeView,
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
@@ -109,6 +109,7 @@ urlpatterns = [
 
     # Profils utilisateur
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
+    path('api/coach/salles-disponibles/', CoachAvailableSallesView.as_view(), name='coach-salles-disponibles'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
     path('api/prospect/me/', ProspectMeView.as_view(), name='prospect-me'),
 

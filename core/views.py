@@ -318,6 +318,39 @@ class CoachMeView(APIView):
         return Response(serializer.errors, status=400)
 
 
+class CoachAvailableSallesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        coach = getattr(request.user, 'coach_profile', None)
+        if not coach:
+            return Response({"error": "Profil coach introuvable."}, status=403)
+
+        ville_coach = (coach.ville or '').strip()
+        ville_query = (request.query_params.get('ville') or '').strip()
+
+        # Règle métier:
+        # - Si le coach a une ville, on force ce filtre côté back.
+        # - Sinon, on n'affiche que les salles de la ville recherchée (si fournie).
+        salles_qs = Salle.objects.all().order_by('nom')
+        if ville_coach:
+            salles_qs = salles_qs.filter(ville__iexact=ville_coach)
+        elif ville_query:
+            salles_qs = salles_qs.filter(ville__icontains=ville_query)
+        else:
+            salles_qs = Salle.objects.none()
+
+        return Response([
+            {
+                "id": s.id,
+                "nom": s.nom,
+                "adresse": s.adresse,
+                "ville": s.ville,
+            }
+            for s in salles_qs
+        ])
+
+
 class AthleteMeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -429,6 +462,27 @@ class SeanceViewSet(viewsets.ModelViewSet):
     serializer_class = SeanceSerializer
     permission_classes = [IsAuthenticated]
 
+    def _inject_salle_from_alias(self, data):
+        """Accept both 'salle' and 'salle_id' payload formats from frontend."""
+        if 'salle' not in data and 'salle_id' in data:
+            data['salle'] = data.get('salle_id')
+
+    def _pick_default_salle_for_coach(self, coach):
+        if not coach:
+            return None
+
+        coach_salles = coach.salles.all()
+        if coach_salles.count() == 1:
+            return coach_salles.first()
+
+        ville_coach = (coach.ville or '').strip()
+        if ville_coach:
+            salle_ville = coach_salles.filter(ville__iexact=ville_coach).first()
+            if salle_ville:
+                return salle_ville
+
+        return None
+
     def get_queryset(self):
         user = self.request.user
 
@@ -455,6 +509,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         try:
             data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            self._inject_salle_from_alias(data)
             exercices_data = data.pop('exercices', [])
 
             serializer = self.get_serializer(data=data)
@@ -506,7 +561,10 @@ class SeanceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         coach = getattr(self.request.user, 'coach_profile', None)
-        serializer.save(coach=coach)
+        salle = serializer.validated_data.get('salle')
+        if salle is None:
+            salle = self._pick_default_salle_for_coach(coach)
+        serializer.save(coach=coach, salle=salle)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -534,6 +592,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
         try:
             instance = self.get_object()
             data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            self._inject_salle_from_alias(data)
             exercices_data = data.pop('exercices', None)
 
             ancienne_date = instance.jour_prevu

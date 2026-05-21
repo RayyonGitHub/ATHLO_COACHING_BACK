@@ -80,7 +80,13 @@ def _get_public_programmes(coach):
 
 
 def _get_salles(coach):
-    return [{"id": s.id, "nom": s.nom, "ville": s.ville} for s in coach.salles.all()]
+    # Retourne les salles affiliées au coach. Si le coach a une ville définie,
+    # ne renvoyer que les salles de la même ville pour éviter de proposer
+    # des salles géographiquement incohérentes.
+    qs = coach.salles.all()
+    if coach.ville:
+        qs = qs.filter(ville__iexact=coach.ville)
+    return [{"id": s.id, "nom": s.nom, "ville": s.ville} for s in qs]
 
 def _serialize_public_coach(coach):
     offres = _normalize_offres(coach.offres_tarifs)
