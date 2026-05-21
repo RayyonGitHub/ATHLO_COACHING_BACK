@@ -628,15 +628,20 @@ class PublicSalleListView(APIView):
     def get(self, request):
         lat = request.query_params.get('lat')
         lng = request.query_params.get('lng')
+        ville = (request.query_params.get('ville') or '').strip()
         rayon = request.query_params.get('rayon', 10)
 
         salles = Salle.objects.all()
+        if ville:
+            salles = salles.filter(ville__icontains=ville)
+
+        has_geo = bool(lat and lng)
         results = []
 
         for salle in salles:
             distance = None
 
-            if lat and lng and salle.latitude is not None and salle.longitude is not None:
+            if has_geo and salle.latitude is not None and salle.longitude is not None:
                 distance = calcul_distance(
                     float(lat),
                     float(lng),
