@@ -677,7 +677,7 @@ class ProspectDemandeDevisView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        devis = Devis.objects.filter(email__iexact=email).select_related('coach__user').order_by('-id')
+        devis = Devis.objects.filter(email__iexact=email).select_related('coach__user', 'invitation_liee').order_by('-id')
         serializer = DevisSerializer(devis, many=True)
 
         return Response(serializer.data, status=status.HTTP_200_OK)

@@ -30,14 +30,14 @@ from .models import (
     Client, Coach, Exercice, Programme, Seance,
     SeanceExercice, Performance, Indisponibilite,
     Inscription, Notification, NotificationAthlete, Salle, Avis,
-    ClientInvitation,   Commande, LigneCommande, Produit
+    ClientInvitation, Devis, Commande, LigneCommande, Produit
 )
 from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
     ProgrammeSerializer, SeanceSerializer, PerformanceSerializer,
     IndisponibiliteSerializer, NotificationSerializer,
     NotificationAthleteSerializer, SalleSerializer, AvisSerializer,
-    ProspectCoachListSerializer, ProspectCoachDetailSerializer, CommandeSerializer
+    ProspectCoachListSerializer, ProspectCoachDetailSerializer, DevisSerializer, CommandeSerializer
 )
 
 
@@ -335,6 +335,50 @@ class CoachAvailableSallesView(APIView):
             }
             for s in salles_qs
         ])
+
+
+class CoachDevisListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        coach = getattr(request.user, 'coach_profile', None)
+        if not coach:
+            return Response({"error": "Accès réservé aux coachs."}, status=403)
+
+        devis_qs = Devis.objects.filter(coach=coach).select_related('coach__user', 'invitation_liee').order_by('-date_creation')
+        return Response(DevisSerializer(devis_qs, many=True).data, status=200)
+
+
+class CoachTraiterDevisView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, devis_id):
+        coach = getattr(request.user, 'coach_profile', None)
+        if not coach:
+            return Response({"error": "Accès réservé aux coachs."}, status=403)
+
+        action_value = (request.data.get('action') or '').strip().lower()
+        if action_value not in ('accepter', 'refuser'):
+            return Response({"error": "Action invalide. Utilisez 'accepter' ou 'refuser'."}, status=400)
+
+        nouveau_statut = 'accepte' if action_value == 'accepter' else 'refuse'
+
+        devis = get_object_or_404(Devis.objects.select_related('coach', 'coach__user'), id=devis_id, coach=coach)
+        if devis.statut in ('accepte', 'refuse'):
+            return Response({"error": "Ce devis a déjà été traité."}, status=400)
+
+        devis.statut = nouveau_statut
+        devis.save(update_fields=['statut'])
+
+        return Response(
+            {
+                "message": "Devis traité avec succès.",
+                "devis_id": devis.id,
+                "devis_statut": devis.statut,
+            },
+            status=200,
+        )
 
 
 class AthleteMeView(APIView):

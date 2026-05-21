@@ -385,6 +385,7 @@ class ProspectCoachDetailSerializer(ProspectCoachListSerializer):
 
 class DevisSerializer(serializers.ModelSerializer):
     coach_nom = serializers.SerializerMethodField()
+    invitation_token = serializers.SerializerMethodField()
 
     class Meta:
         model = Devis
@@ -393,6 +394,11 @@ class DevisSerializer(serializers.ModelSerializer):
     def get_coach_nom(self, obj):
         full_name = f"{obj.coach.user.first_name} {obj.coach.user.last_name}".strip()
         return full_name or obj.coach.user.username
+
+    def get_invitation_token(self, obj):
+        if obj.invitation_liee:
+            return obj.invitation_liee.token
+        return None
 
 
 # --- Serializer pour les activités Strava/Garmin ---
