@@ -376,6 +376,26 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
         )
 
 
+# Notification au responsable de salle quand une séance est créée pour sa salle
+@receiver(post_save, sender=Seance)
+def notify_responsable_on_seance_created(sender, instance, created, **kwargs):
+    if not created:
+        return
+    if not instance.salle:
+        return
+
+    # Trouver le responsable de la salle (s'il existe)
+    responsables = instance.salle.responsables.all()
+    for resp in responsables:
+        Notification.objects.create(
+            coach=None,
+            seance=instance,
+            message=(f"Nouvelle séance planifiée: #{instance.id} - {instance.titre} "
+                     f"le {instance.jour_prevu} à {instance.heure_debut or 'heure non précisée'}"),
+            type='INFO'
+        )
+
+
 class Devis(models.Model):
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')
     nom = models.CharField(max_length=100)
