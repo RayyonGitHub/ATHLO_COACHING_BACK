@@ -397,6 +397,12 @@ def notify_responsable_on_seance_created(sender, instance, created, **kwargs):
 
 
 class Devis(models.Model):
+    STATUT_CHOICES = [
+        ('en_attente', 'En attente'),
+        ('accepte', 'Accepté'),
+        ('refuse', 'Refusé'),
+    ]
+
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
@@ -411,7 +417,14 @@ class Devis(models.Model):
     budget = models.CharField(max_length=50, blank=True)
     pathologies_blessures = models.TextField(blank=True)
     message = models.TextField(blank=True)
-    statut = models.CharField(max_length=20, default="en_attente")
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default="en_attente")
+    invitation_liee = models.ForeignKey(
+        ClientInvitation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='devis_associes'
+    )
     date_creation = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
