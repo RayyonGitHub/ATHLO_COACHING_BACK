@@ -11,10 +11,16 @@ from .models import (
 
 # --- PROFILS ---
 class ClientSerializer(serializers.ModelSerializer):
+    invitation_status = serializers.SerializerMethodField()
+
     class Meta:
         model = Client
         fields = '__all__'
         read_only_fields = ['coach', 'user']
+
+    def get_invitation_status(self, obj):
+        latest = obj.payment_invitations.order_by('-created_at').first()
+        return latest.status if latest else None
 
 class CoachSerializer(serializers.ModelSerializer):
     salles = serializers.PrimaryKeyRelatedField(many=True, queryset=Salle.objects.all(), required=False)
@@ -141,11 +147,25 @@ class SeanceSerializer(serializers.ModelSerializer):
     places_restantes = serializers.SerializerMethodField()
     est_inscrit = serializers.SerializerMethodField()
     mon_statut = serializers.SerializerMethodField()
+    athlete_nom = serializers.SerializerMethodField()
+    athlete_prenom = serializers.SerializerMethodField()
 
     class Meta:
         model = Seance
         fields = '__all__'
         read_only_fields = ['coach']
+
+    def get_athlete_nom(self, obj):
+        if obj.programme and obj.programme.athlete:
+            return obj.programme.athlete.nom
+        ins = obj.inscriptions.filter(statut='CONFIRME').first() or obj.inscriptions.first()
+        return ins.client.nom if ins else None
+
+    def get_athlete_prenom(self, obj):
+        if obj.programme and obj.programme.athlete:
+            return obj.programme.athlete.prenom
+        ins = obj.inscriptions.filter(statut='CONFIRME').first() or obj.inscriptions.first()
+        return ins.client.prenom if ins else None
 
     def get_nombre_inscrits(self, obj):
         if not hasattr(obj, 'inscriptions'):

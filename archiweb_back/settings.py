@@ -18,10 +18,10 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-STRAVA_CLIENT_ID = os.getenv('STRAVA_CLIENT_ID')
-STRAVA_CLIENT_SECRET = os.getenv('STRAVA_CLIENT_SECRET')
+STRAVA_CLIENT_ID = "248821"
+STRAVA_CLIENT_SECRET = "77daac80321285a1b1d00ebf0fdd6755b2b189dd"
 
-ALLOWED_HOSTS = ['10.8.252.9', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['*']
 
 # --- Application definition ---
 
@@ -103,8 +103,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # --- CONFIGURATION CORS ---
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
+     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
@@ -160,6 +162,10 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # --- FRONTEND URL (RESET PASSWORD) ---
 FRONTEND_URL = 'http://localhost:5173'
+
+# --- EXPO DEV URL (pour tester les deep links avec Expo Go) ---
+# Format : exp://IP:8081  — mettre à None en production
+EXPO_DEV_URL = 'exp://192.168.137.1:8081'
 
 # --- GOOGLE CALENDAR ---
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
