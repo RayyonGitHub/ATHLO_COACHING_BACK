@@ -46,7 +46,13 @@ def register_view(request):
         )
 
         if role == 'coach':
-            Coach.objects.create(user=user)
+            Coach.objects.create(
+                user=user,
+                specialite=request.data.get('specialite', ''),
+                ville=request.data.get('ville', ''),
+                specialites_tags=request.data.get('specialites_tags', []),
+                offres_tarifs=request.data.get('offres_tarifs', {}),
+            )
 
         return Response({
             'message': 'Inscription réussie',
@@ -121,14 +127,20 @@ def forgot_password_view(request):
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
 
-            reset_link = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+            web_link    = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+            mobile_link = f"athlo://reset-password?uid={uid}&token={token}"
+            expo_dev_url = getattr(settings, 'EXPO_DEV_URL', None)
+            expo_link   = f"{expo_dev_url}/--/reset-password?uid={uid}&token={token}" if expo_dev_url else None
 
             subject = "Réinitialisation de votre mot de passe ATHLO"
             message = (
                 f"Bonjour {user.first_name or user.username},\n\n"
                 f"Vous avez demandé la réinitialisation de votre mot de passe.\n\n"
-                f"Cliquez sur ce lien pour définir un nouveau mot de passe :\n"
-                f"{reset_link}\n\n"
+                f"Depuis l'application mobile (build) :\n"
+                f"{mobile_link}\n\n"
+                + (f"Depuis Expo Go (dev) :\n{expo_link}\n\n" if expo_link else "")
+                + f"Depuis le navigateur web :\n"
+                f"{web_link}\n\n"
                 f"Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet email.\n\n"
                 f"L'équipe ATHLO"
             )
