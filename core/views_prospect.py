@@ -245,9 +245,9 @@ class ProspectCheckoutPayView(APIView):
 
         try:
             # 1. Création de l'intention de paiement Stripe
-           fee_amount = 0
-           if coach.platform_plan == 'free':
-            fee_amount = int((amount * 100) * 0.10) # 10% de commission
+            fee_amount = 0
+            if coach.platform_plan == 'free':
+                fee_amount = int((amount * 100) * 0.10)
 
             intent_kwargs = {
                 "amount": int(amount * 100),

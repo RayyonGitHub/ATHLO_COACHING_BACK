@@ -12,7 +12,7 @@ from core.views_responsable import ResponsableDashboardStatsView, ResponsablePla
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
-from core.views_stripe import stripe_webhook, CreatePlatformSubscriptionView, CreateStripeConnectAccountView
+from core.views_stripe import stripe_webhook, CreatePlatformSubscriptionView, CreateStripeConnectAccountView, CheckStripeConnectStatusView, stripe_connect_relay
 from core.views_admin import admin_salle_list_create, admin_salle_delete
 from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list, admin_exercice_list_create, admin_exercice_detail, admin_category_list_create, admin_category_delete, admin_me_view, admin_change_my_password, admin_responsable_list_create, admin_responsable_delete
 from core.views_integrations import (
@@ -37,14 +37,7 @@ from core.views_auth import (
     forgot_password_view,
     reset_password_view,
 )
-from core.views_admin import (
-    admin_login_view,
-    admin_coach_list,
-    admin_athlete_list,
-    admin_stats_view,
-    admin_toggle_coach_status,
-    admin_delete_athlete
-)
+from core import views_admin
 from core.views import export_coach_calendar, remove_participant, update_inscription_status, coach_inscrire_client
 from core.views_messages import (
     AvailableContactsView,
@@ -200,6 +193,8 @@ urlpatterns = [
     path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
     path('api/stripe/create-subscription/', CreatePlatformSubscriptionView.as_view(), name='create-subscription'),
     path('api/stripe/connect-onboarding/', CreateStripeConnectAccountView.as_view(), name='connect-onboarding'),
+    path('api/stripe/connect-status/', CheckStripeConnectStatusView.as_view(), name='connect-status'),
+    path('api/stripe/connect-relay/', stripe_connect_relay, name='stripe-connect-relay'),
     
    # Dashboard Responsable Salle
     path('api/responsable/dashboard-stats/', ResponsableDashboardStatsView.as_view(), name='responsable-dashboard-stats'),
