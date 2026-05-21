@@ -2,9 +2,11 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.password_validation import validate_password
-from django.core.mail import send_mail
+from django.http import HttpResponse
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+
+from .email_utils import send_html_email
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -128,31 +130,26 @@ def forgot_password_view(request):
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
+            platform = request.data.get("platform", "web")
 
-            web_link    = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
-            mobile_link = f"athlo://reset-password?uid={uid}&token={token}"
-            expo_dev_url = getattr(settings, 'EXPO_DEV_URL', None)
-            expo_link   = f"{expo_dev_url}/--/reset-password?uid={uid}&token={token}" if expo_dev_url else None
+            if platform == "mobile":
+                backend_url = request.build_absolute_uri("/").rstrip("/")
+                reset_link = f"{backend_url}/api/auth/reset-relay/?uid={uid}&token={token}"
+            else:
+                reset_link = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
 
-            subject = "Réinitialisation de votre mot de passe ATHLO"
-            message = (
-                f"Bonjour {user.first_name or user.username},\n\n"
-                f"Vous avez demandé la réinitialisation de votre mot de passe.\n\n"
-                f"Depuis l'application mobile (build) :\n"
-                f"{mobile_link}\n\n"
-                + (f"Depuis Expo Go (dev) :\n{expo_link}\n\n" if expo_link else "")
-                + f"Depuis le navigateur web :\n"
-                f"{web_link}\n\n"
-                f"Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet email.\n\n"
-                f"L'équipe ATHLO"
-            )
-
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=False,
+            send_html_email(
+                subject="Réinitialisation de votre mot de passe ATHLO",
+                to=user.email,
+                greeting=f"Bonjour {user.first_name or user.username},",
+                paragraphs=[
+                    "Vous avez demandé la réinitialisation de votre mot de passe ATHLO.",
+                    "Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe. "
+                    "Ce lien est valable <strong>24 heures</strong>.",
+                ],
+                cta_label="Réinitialiser mon mot de passe",
+                cta_url=reset_link,
+                note="Si vous n'êtes pas à l'origine de cette demande, aucune action n'est requise.",
             )
 
         return Response({
@@ -208,3 +205,37 @@ def reset_password_view(request):
 
     except Exception as e:
         return Response({'message': str(e)}, status=500)
+
+
+def invite_relay(request):
+    """
+    Relay HTTP → deep link pour le flow invitation.
+    Les clients email bloquent exp:// et athlo:// — on passe par cette URL HTTP.
+    """
+    token = request.GET.get("token", "")
+    expo_dev_url = getattr(settings, "EXPO_DEV_URL", None)
+    if expo_dev_url:
+        target = f"{expo_dev_url}/--/invite-checkout?token={token}"
+    else:
+        target = f"athlo://invite-checkout?token={token}"
+    response = HttpResponse(status=302)
+    response["Location"] = target
+    return response
+
+
+def password_reset_relay(request):
+    """
+    Relay HTTP → deep link pour le reset de mot de passe.
+    Les clients email bloquent exp:// et athlo:// — on passe par cette URL HTTP
+    qui redirige vers le bon deep link côté app.
+    """
+    uid = request.GET.get("uid", "")
+    token = request.GET.get("token", "")
+    expo_dev_url = getattr(settings, "EXPO_DEV_URL", None)
+    if expo_dev_url:
+        target = f"{expo_dev_url}/--/reset-password?uid={uid}&token={token}"
+    else:
+        target = f"athlo://reset-password?uid={uid}&token={token}"
+    response = HttpResponse(status=302)
+    response["Location"] = target
+    return response

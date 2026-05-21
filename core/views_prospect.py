@@ -4,6 +4,7 @@ from django.db.models import Avg
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.mail import send_mail
+from .email_utils import link_for_platform, send_html_email
 from django.conf import settings
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
@@ -437,20 +438,20 @@ class ProspectActivateAthleteView(APIView):
 
         # 4. Email de bienvenue à l'athlète
         try:
-            _send_email(
-                subject="ATHLO - Votre compte athlète est activé",
-                message=(
-                    f"Bonjour {data['prenom']},\n\n"
-                    f"Votre paiement a été confirmé et votre compte athlète ATHLO est maintenant actif.\n\n"
-                    f"Offre souscrite : {payload.get('offer_label')} — {payload.get('amount')}€\n"
-                    f"Coach : {coach.user.first_name} {coach.user.last_name}\n\n"
-                    f"Connectez-vous avec :\n"
-                    f"Email : {user.email}\n"
-                    f"Lien : {settings.FRONTEND_URL}/login\n\n"
-                    f"À très bientôt,\n"
-                    f"L'équipe ATHLO"
-                ),
-                recipient=user.email,
+            platform = request.data.get("platform", "web")
+            login_link = link_for_platform(platform, mobile_path="(tabs)/athlete", web_path="login")
+            coach_name = f"{coach.user.first_name} {coach.user.last_name}".strip()
+            send_html_email(
+                subject="ATHLO — Votre compte athlète est activé",
+                to=user.email,
+                greeting=f"Bienvenue sur ATHLO, {data['prenom']} !",
+                paragraphs=[
+                    "Votre paiement a été confirmé et votre compte athlète est maintenant actif.",
+                    f"Offre souscrite : <strong>{payload.get('offer_label')}</strong> — <strong>{payload.get('amount')}€</strong>",
+                    f"Votre coach : <strong>{coach_name}</strong>",
+                ],
+                cta_label="Accéder à mon espace",
+                cta_url=login_link,
             )
         except Exception:
             pass  # L'activation ne doit pas échouer si l'email plante
@@ -653,17 +654,18 @@ class InvitationSetPasswordView(APIView):
         invitation.activated_at = timezone.now()
         invitation.save(update_fields=['status', 'activated_at'])
 
-        _send_email(
-            subject="ATHLO - Votre compte est prêt",
-            message=(
-                f"Bonjour {invitation.client.prenom},\n\n"
-                f"Votre compte ATHLO est maintenant activé.\n\n"
-                f"Vous pouvez vous connecter avec :\n"
-                f"Email : {user.email}\n"
-                f"Connexion : {settings.FRONTEND_URL}/login\n\n"
-                f"L'équipe ATHLO"
-            ),
-            recipient=user.email
+        platform = request.data.get("platform", "web")
+        login_link = link_for_platform(platform, mobile_path="(tabs)/athlete", web_path="login")
+        send_html_email(
+            subject="ATHLO — Votre compte est prêt",
+            to=user.email,
+            greeting=f"Bienvenue, {invitation.client.prenom} !",
+            paragraphs=[
+                "Votre mot de passe a été défini et votre compte ATHLO est maintenant prêt.",
+                f"Utilisez votre adresse email <strong>{user.email}</strong> pour vous connecter.",
+            ],
+            cta_label="Accéder à mon espace",
+            cta_url=login_link,
         )
 
         # Return JWT tokens so mobile can auto-login (web ignores these fields)
