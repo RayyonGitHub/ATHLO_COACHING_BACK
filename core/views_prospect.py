@@ -15,7 +15,7 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 import stripe
 from django.conf import settings
-from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
@@ -397,7 +397,41 @@ class ProspectActivateAthleteView(APIView):
         if payload.get("offer_type") == 'pack':
             athlete_profile.seances_restantes = (athlete_profile.seances_restantes or 0) + 10
             athlete_profile.save()
-            
+
+        # 4. Email de bienvenue à l'athlète
+        try:
+            _send_email(
+                subject="ATHLO - Votre compte athlète est activé",
+                message=(
+                    f"Bonjour {data['prenom']},\n\n"
+                    f"Votre paiement a été confirmé et votre compte athlète ATHLO est maintenant actif.\n\n"
+                    f"Offre souscrite : {payload.get('offer_label')} — {payload.get('amount')}€\n"
+                    f"Coach : {coach.user.first_name} {coach.user.last_name}\n\n"
+                    f"Connectez-vous avec :\n"
+                    f"Email : {user.email}\n"
+                    f"Lien : {settings.FRONTEND_URL}/login\n\n"
+                    f"À très bientôt,\n"
+                    f"L'équipe ATHLO"
+                ),
+                recipient=user.email,
+            )
+        except Exception:
+            pass  # L'activation ne doit pas échouer si l'email plante
+
+        # 5. Notification in-app pour le coach
+        try:
+            Notification.objects.create(
+                coach=coach,
+                seance=None,
+                type='PAIEMENT',
+                message=(
+                    f"Nouvel athlète inscrit : {data['prenom']} {data['nom']} "
+                    f"({payload.get('offer_label')}, {payload.get('amount')}€)."
+                ),
+            )
+        except Exception:
+            pass
+
         return Response({
             "message": "Paiement confirmé et profil athlète activé.",
             "token": str(refresh.access_token),
@@ -519,6 +553,21 @@ class InvitationSetPasswordView(APIView):
         if error_response:
             return error_response
 
+        # If invitation is still pending, try to verify payment directly via Stripe
+        # (covers mobile flow where webhook may not have fired yet)
+        if invitation.status == 'pending':
+            payment_intent_id = data.get('payment_intent_id', '').strip()
+            if payment_intent_id:
+                try:
+                    intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                    if intent.status == 'succeeded':
+                        invitation.status = 'paid'
+                        invitation.payment_status = 'success'
+                        invitation.paid_at = timezone.now()
+                        invitation.save(update_fields=['status', 'payment_status', 'paid_at'])
+                except Exception:
+                    pass
+
         if invitation.status != 'paid':
             return Response(
                 {"message": "Le paiement doit être validé avant de définir le mot de passe."},
@@ -555,8 +604,18 @@ class InvitationSetPasswordView(APIView):
             recipient=user.email
         )
 
+        # Return JWT tokens so mobile can auto-login (web ignores these fields)
+        refresh = RefreshToken.for_user(user)
         return Response({
-            "message": "Compte activé avec succès."
+            "message": "Compte activé avec succès.",
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": f"{user.first_name} {user.last_name}".strip(),
+                "role": "athlete",
+            },
         }, status=status.HTTP_200_OK)
 
 

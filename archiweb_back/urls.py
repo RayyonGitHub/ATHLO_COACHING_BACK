@@ -43,7 +43,7 @@ from core.views_admin import (
     admin_toggle_coach_status,
     admin_delete_athlete
 )
-from core.views import export_coach_calendar, remove_participant, update_inscription_status
+from core.views import export_coach_calendar, remove_participant, update_inscription_status, coach_inscrire_client
 from core.views_messages import (
     AvailableContactsView,
     ConversationListCreateView,
@@ -151,6 +151,7 @@ urlpatterns = [
     path('api/inscriptions/<int:inscription_id>/status/', update_inscription_status, name='update-inscription-status'),
     path('api/inscriptions/reserver/<int:seance_id>/', views.athlete_reserver_seance, name='athlete-reserver-seance'),
     path('api/inscriptions/annuler/<int:inscription_id>/', views.athlete_annuler_reservation, name='athlete-annuler-reservation'),
+    path('api/inscriptions/coach/inscrire/<int:seance_id>/', coach_inscrire_client, name='coach-inscrire-client'),
 
     # Messagerie
     path('api/messages/contacts/', AvailableContactsView.as_view(), name='message-contacts'),
