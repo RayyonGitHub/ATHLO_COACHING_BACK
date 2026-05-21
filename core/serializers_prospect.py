@@ -76,6 +76,7 @@ class InvitationSetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField()
     new_password = serializers.CharField()
     confirm_password = serializers.CharField()
+    payment_intent_id = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
         if attrs['new_password'] != attrs['confirm_password']:
