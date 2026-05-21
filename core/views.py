@@ -14,6 +14,7 @@ from django.db.models import Q, Sum, Min, Max, F
 from django.contrib.auth import authenticate, update_session_auth_hash
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
+from .email_utils import link_for_platform, send_html_email
 from django.conf import settings
 from icalendar import Calendar, Event
 from decimal import Decimal
@@ -249,32 +250,29 @@ class ClientViewSet(viewsets.ModelViewSet):
             expires_at=timezone.now() + timedelta(days=7),
         )
 
-        web_link    = f"{settings.FRONTEND_URL}/invite/checkout?token={invitation.token}"
-        mobile_link = f"athlo://invite-checkout?token={invitation.token}"
-        expo_dev_url = getattr(settings, 'EXPO_DEV_URL', None)
-        expo_link   = f"{expo_dev_url}/--/invite-checkout?token={invitation.token}" if expo_dev_url else None
+        platform = self.request.data.get("platform", "web")
+        if platform == "mobile":
+            backend_url = self.request.build_absolute_uri("/").rstrip("/")
+            invite_link = f"{backend_url}/api/auth/invite-relay/?token={invitation.token}"
+        else:
+            invite_link = f"{settings.FRONTEND_URL}/invite/checkout?token={invitation.token}"
+        expiry_str = invitation.expires_at.strftime("%d/%m/%Y à %H:%M")
+        coach_name = f"{coach_profile.user.first_name} {coach_profile.user.last_name}".strip()
 
-        subject = "ATHLO - Finalisez votre inscription"
-        message = (
-            f"Bonjour {prenom or nom or 'Athlète'},\n\n"
-            f"Votre coach vous a invité à rejoindre ATHLO.\n\n"
-            f"Avant d'activer votre compte, veuillez finaliser le paiement :\n\n"
-            f"Depuis l'application mobile (build) :\n"
-            f"{mobile_link}\n\n"
-            + (f"Depuis Expo Go (dev) :\n{expo_link}\n\n" if expo_link else "")
-            + f"Depuis le navigateur web :\n"
-            f"{web_link}\n\n"
-            f"Une fois le paiement validé, vous pourrez définir votre mot de passe et accéder à votre espace.\n\n"
-            f"Cette invitation expire le {invitation.expires_at.strftime('%d/%m/%Y à %H:%M')}.\n\n"
-            f"L'équipe ATHLO"
-        )
-
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
-            recipient_list=[email],
-            fail_silently=False
+        send_html_email(
+            subject="ATHLO — Finalisez votre inscription",
+            to=email,
+            greeting=f"Bonjour {prenom or nom or 'Athlète'},",
+            paragraphs=[
+                f"Votre coach <strong>{coach_name}</strong> vous a invité à rejoindre ATHLO.",
+                f"Pour activer votre compte, finalisez votre paiement pour l'offre "
+                f"<strong>{offer_label}</strong> — <strong>{amount}€</strong>.",
+                f"Une fois le paiement validé, vous pourrez définir votre mot de passe "
+                f"et accéder à votre espace personnel.",
+                f"Cette invitation expire le <strong>{expiry_str}</strong>.",
+            ],
+            cta_label="Finaliser mon inscription",
+            cta_url=invite_link,
         )
 
         Notification.objects.create(

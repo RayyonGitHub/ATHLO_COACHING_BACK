@@ -36,6 +36,8 @@ from core.views_auth import (
     login_view,
     forgot_password_view,
     reset_password_view,
+    password_reset_relay,
+    invite_relay,
 )
 from core import views_admin
 from core.views import export_coach_calendar, remove_participant, update_inscription_status, coach_inscrire_client
@@ -97,6 +99,8 @@ urlpatterns = [
     path('api/auth/login/', login_view, name='login'),
     path('api/auth/forgot-password/', forgot_password_view, name='forgot-password'),
     path('api/auth/reset-password/', reset_password_view, name='reset-password'),
+    path('api/auth/reset-relay/', password_reset_relay, name='password-reset-relay'),
+    path('api/auth/invite-relay/', invite_relay, name='invite-relay'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
 
