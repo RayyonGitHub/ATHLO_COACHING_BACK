@@ -2,12 +2,35 @@ import json
 import stripe
 from django.conf import settings
 from django.http import HttpResponse
+from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import Commande, Facture, ClientInvitation, Notification, Coach
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+def stripe_connect_relay(request):
+    """Relay view: redirects to mobile deep link or web frontend after Stripe flows."""
+    platform = request.GET.get('platform', 'web')
+    status = request.GET.get('status', 'success')
+
+    if platform == 'mobile':
+        expo_dev_url = getattr(settings, 'EXPO_DEV_URL', None)
+        if expo_dev_url:
+            target = f"{expo_dev_url}/--/(tabs)/coach/settings?stripe_connect={status}"
+        else:
+            target = f"athlo://(tabs)/coach/settings?stripe_connect={status}"
+        # Use raw HttpResponse to bypass Django's scheme whitelist (exp:// is safe here)
+        response = HttpResponse(status=302)
+        response['Location'] = target
+        return response
+
+    frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+    return redirect(f"{frontend_url}/parametres?stripe_connect={status}")
 
 
 @csrf_exempt
@@ -87,7 +110,6 @@ def stripe_webhook(request):
     # 4. Vérification de la complétion du compte Stripe Connect
     elif event_dict['type'] == 'account.updated':
         account = event_dict['data']['object']
-        # Si details_submitted est True, le coach a fini de remplir ses infos
         if account.get('details_submitted') == True:
             try:
                 coach = Coach.objects.get(stripe_account_id=account.get('id'))
@@ -113,28 +135,59 @@ class CreatePlatformSubscriptionView(APIView):
             coach.stripe_customer_id = customer.id
             coach.save()
 
+        platform = request.data.get('platform', 'web')
+        front_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        if platform == 'mobile':
+            backend_url = request.build_absolute_uri('/').rstrip('/')
+            success_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=subscription_success"
+            cancel_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=subscription_canceled"
+        else:
+            success_url = front_url + '/parametres?session_id={CHECKOUT_SESSION_ID}&success=true'
+            cancel_url = front_url + '/parametres?canceled=true'
+
         try:
-            # 2. Création de la session Checkout en mode 'subscription'
             checkout_session = stripe.checkout.Session.create(
                 customer=coach.stripe_customer_id,
                 payment_method_types=['card'],
                 mode='subscription',
                 line_items=[{
-                    # ATTENTION : Remplace ce 'price_xxx' par ton VRAI ID de prix Stripe !
-                    'price': getattr(settings, 'STRIPE_PREMIUM_PRICE_ID', 'price_1TXkjbC9OZTHr1sPOvQJsjwl'), 
+                    'price': getattr(settings, 'STRIPE_PREMIUM_PRICE_ID', 'price_1TXkjbC9OZTHr1sPOvQJsjwl'),
                     'quantity': 1,
                 }],
                 metadata={
                     'checkout_type': 'platform_subscription',
                     'coach_id': coach.id
                 },
-                success_url=settings.FRONTEND_URL + '/parametres?session_id={CHECKOUT_SESSION_ID}&success=true',
-                cancel_url=settings.FRONTEND_URL + '/parametres?canceled=true',
+                success_url=success_url,
+                cancel_url=cancel_url,
             )
             return Response({'checkout_url': checkout_session.url})
         except Exception as e:
-            print(f"❌ ERREUR STRIPE ABONNEMENT : {str(e)}") # S'affichera dans ton terminal
+            print(f"❌ ERREUR STRIPE ABONNEMENT : {str(e)}")
             return Response({'error': str(e)}, status=400)
+
+
+class CheckStripeConnectStatusView(APIView):
+    """Call this after returning from Stripe onboarding to sync stripe_onboarding_complete."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        coach = request.user.coach_profile
+
+        if not coach.stripe_account_id:
+            return Response({'stripe_onboarding_complete': False})
+
+        try:
+            account = stripe.Account.retrieve(coach.stripe_account_id)
+            if account.details_submitted and not coach.stripe_onboarding_complete:
+                coach.stripe_onboarding_complete = True
+                coach.save(update_fields=['stripe_onboarding_complete'])
+        except Exception as e:
+            print(f"❌ ERREUR connect-status : {str(e)}")
+            return Response({'error': str(e)}, status=400)
+
+        return Response({'stripe_onboarding_complete': coach.stripe_onboarding_complete})
 
 
 class CreateStripeConnectAccountView(APIView):
@@ -143,11 +196,20 @@ class CreateStripeConnectAccountView(APIView):
     def post(self, request):
         coach = request.user.coach_profile
         front_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-        
+        platform = request.data.get('platform', 'web')
+
+        # Build relay URLs for mobile, direct URLs for web
+        if platform == 'mobile':
+            backend_url = request.build_absolute_uri('/').rstrip('/')
+            return_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=success"
+            refresh_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=refresh"
+        else:
+            return_url = f"{front_url}/parametres?stripe_connect=success"
+            refresh_url = f"{front_url}/parametres?stripe_connect=refresh"
+
         # 1. Si le coach n'a pas encore de compte Connect créé
         if not coach.stripe_account_id:
             try:
-                # Version ultra-simplifiée : on laisse Stripe gérer le reste
                 account = stripe.Account.create(
                     type="express",
                     email=request.user.email if request.user.email else None,
@@ -155,18 +217,18 @@ class CreateStripeConnectAccountView(APIView):
                 coach.stripe_account_id = account.id
                 coach.save()
             except Exception as e:
-                print(f"❌ ERREUR CREATION COMPTE CONNECT : {str(e)}") # S'affichera dans ton terminal
+                print(f"❌ ERREUR CREATION COMPTE CONNECT : {str(e)}")
                 return Response({'error': str(e)}, status=400)
 
         # 2. On crée un lien d'onboarding sécurisé vers Stripe
         try:
             account_link = stripe.AccountLink.create(
                 account=coach.stripe_account_id,
-                refresh_url=f"{front_url}/parametres?stripe_connect=refresh",
-                return_url=f"{front_url}/parametres?stripe_connect=success",
+                refresh_url=refresh_url,
+                return_url=return_url,
                 type="account_onboarding",
             )
             return Response({'checkout_url': account_link.url})
         except Exception as e:
-            print(f"❌ ERREUR LIEN ONBOARDING CONNECT : {str(e)}") # S'affichera dans ton terminal
+            print(f"❌ ERREUR LIEN ONBOARDING CONNECT : {str(e)}")
             return Response({'error': str(e)}, status=400)
