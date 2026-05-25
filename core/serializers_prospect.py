@@ -17,6 +17,7 @@ class PublicCoachSerializer(serializers.Serializer):
 
 class ProspectActivateAthleteSerializer(serializers.Serializer):
     checkout_token = serializers.CharField()
+    payment_intent_id = serializers.CharField()
 
     prenom = serializers.CharField(max_length=100)
     nom = serializers.CharField(max_length=100)

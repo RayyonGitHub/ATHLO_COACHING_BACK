@@ -26,8 +26,8 @@ def google_calendar_status(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def google_calendar_connect(request):
-    if not hasattr(request.user, 'coach_profile'):
-        return Response({"detail": "Réservé aux coachs."}, status=403)
+    # Si l'utilisateur n'a pas encore de profil coach (inscription en cours), le créer.
+    coach, _ = Coach.objects.get_or_create(user=request.user)
 
     code = request.data.get("code")
     if not code:
@@ -42,7 +42,6 @@ def google_calendar_connect(request):
     if not access_token:
         return Response(token_data, status=400)
 
-    coach = request.user.coach_profile
     coach.google_access_token = access_token
 
     if refresh_token:
