@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Coach
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 @api_view(['POST'])
@@ -56,8 +57,13 @@ def register_view(request):
                 offres_tarifs=request.data.get('offres_tarifs', {}),
             )
 
+        # Générer et renvoyer des tokens JWT pour garder l'utilisateur connecté
+        refresh = RefreshToken.for_user(user)
+
         return Response({
             'message': 'Inscription réussie',
+            'token': str(refresh.access_token),
+            'refresh': str(refresh),
             'user': {
                 'id': user.id,
                 'email': user.email,

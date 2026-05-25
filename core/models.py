@@ -461,14 +461,14 @@ class ActiviteExterne(models.Model):
 
 
 class CategorieProduit(models.Model):
-        nom = models.CharField(max_length=100)
-        slug = models.SlugField(unique=True)
+    nom = models.CharField(max_length=100)
+    slug = models.SlugField(unique=True)
 
-class Meta:
+    class Meta:
         verbose_name = "Catégorie de Produit"
         verbose_name_plural = "Catégories de Produits"
 
-def __str__(self):
+    def __str__(self):
         return self.nom
 
 
@@ -529,12 +529,7 @@ class Commande(models.Model):
 
     # Logistique (Boutique)
     adresse_livraison = models.TextField(blank=True, null=True)
-    order_number = models.CharField(
-        max_length=20, 
-        unique=True, 
-        null=True, 
-        blank=True
-    )
+
     def __str__(self):
         return f"Commande {self.order_number} - {self.client}"
 

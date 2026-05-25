@@ -188,14 +188,10 @@ urlpatterns = [
     path('api/athlete/integrations/strava/sync/', strava_sync, name='strava-sync'),
     path('api/athlete/integrations/activities/', get_external_activities, name='get-external-activities'),
     path('api/shop/orders/', CreateOrderView.as_view(), name='create-order'),
-   
-    path('api/admin/users/<int:pk>/update/', views_admin.admin_update_user, name='admin-update-user'),
-    path('api/admin/users/<int:pk>/change-password/', views_admin.admin_change_password, name='admin-change-password'),
-    path('api/admin/users/<int:pk>/force-logout/', views_admin.admin_force_logout, name='admin-force-logout'),
-    path('api/admin/users/<int:pk>/toggle-status/', views_admin.admin_toggle_user_status, name='admin-toggle-status'),
 
     # --- À AJOUTER DANS urlpatterns ---
     path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
+    path('api/shop/my-orders/', views.AthleteCommandeHistoryView.as_view(), name='shop-my-orders'),
     path('api/shop/create-intent/', CreateShopPaymentIntentView.as_view(), name='shop-create-intent'),
     path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
     path('api/stripe/create-subscription/', CreatePlatformSubscriptionView.as_view(), name='create-subscription'),

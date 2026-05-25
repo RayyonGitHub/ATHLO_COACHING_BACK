@@ -287,7 +287,11 @@ class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        coach, _ = Coach.objects.get_or_create(user=request.user)
+        # Ne pas créer automatiquement de profil Coach pour tout utilisateur authentifié.
+        # Retourne le profil coach si existant, sinon 404 pour éviter la pollution des users.
+        coach = getattr(request.user, 'coach_profile', None)
+        if not coach:
+            return Response({"detail": "Profil coach introuvable."}, status=404)
         data = CoachSerializer(coach).data
         data['prenom'] = request.user.first_name
         data['nom'] = request.user.last_name
@@ -296,7 +300,10 @@ class CoachMeView(APIView):
 
     def patch(self, request):
         user = request.user
-        coach, _ = Coach.objects.get_or_create(user=user)
+        # Met à jour le profil coach uniquement si le profil existe
+        coach = getattr(user, 'coach_profile', None)
+        if not coach:
+            return Response({"detail": "Profil coach introuvable."}, status=404)
 
         if 'prenom' in request.data:
             user.first_name = request.data.get('prenom')
@@ -1326,8 +1333,12 @@ class CoachCalendarView(APIView):
     def get(self, request, coach_id=None):
         if hasattr(request.user, 'coach_profile'):
             coach = request.user.coach_profile
-        else:
+            if coach_id is not None and coach.id != coach_id:
+                return Response({"error": "Action non autorisée."}, status=status.HTTP_403_FORBIDDEN)
+        elif request.user.is_staff:
             coach = get_object_or_404(Coach, id=coach_id)
+        else:
+            return Response({"error": "Action non autorisée."}, status=status.HTTP_403_FORBIDDEN)
 
         seances = Seance.objects.filter(coach=coach).prefetch_related('inscriptions__client')
 
@@ -1440,32 +1451,45 @@ class PerformanceCreateView(APIView):
         exercices_data = request.data.get('exercices', [])
 
         if not seance_id:
-            return Response({"erreur": "seance_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
+              return Response({"erreur": "seance_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
 
         seance = get_object_or_404(Seance, id=seance_id)
+        if not seance.inscriptions.filter(client=athlete).exists():
+            return Response({"erreur": "Vous n'êtes pas inscrit à cette séance."}, status=status.HTTP_403_FORBIDDEN)
         created = []
+        skipped = []
 
-        for item in exercices_data:
-            exercice_id = item.get('exercice_id')
+        for idx, item in enumerate(exercices_data):
+            # Accept multiple possible frontend key names for robustness
+            exercice_id = item.get('exercice_id') or item.get('exerciceId') or item.get('id')
+            series_realisees = item.get('series_realisees') if item.get('series_realisees') is not None else item.get('series')
+            reps_realisees = item.get('reps_realisees') if item.get('reps_realisees') is not None else item.get('reps')
+            poids_utilise_val = item.get('poids_moyen') if item.get('poids_moyen') is not None else item.get('poids')
             if not exercice_id:
+                skipped.append({'index': idx, 'reason': 'missing_exercice_id', 'item': item})
                 continue
             seance_exercice = SeanceExercice.objects.filter(seance=seance, exercice_id=exercice_id).first()
             if not seance_exercice:
+                skipped.append({'index': idx, 'exercice_id': exercice_id, 'reason': 'not_in_seance'})
                 continue
             Performance.objects.create(
                 client=athlete,
                 seance_exercice=seance_exercice,
-                series_realisees=item.get('series_realisees', 0),
-                reps_realisees=item.get('reps_realisees', 0),
-                poids_utilise=item.get('poids_moyen', 0.0),
-                notes_athlete=request.data.get('notes', ''),
+                series_realisees=series_realisees or 0,
+                reps_realisees=reps_realisees or 0,
+                poids_utilise=poids_utilise_val or 0.0,
+                notes_athlete=item.get('notes') or request.data.get('notes', ''),
             )
             created.append(exercice_id)
 
         seance.est_completee = True
         seance.save(update_fields=['est_completee'])
 
-        return Response({"message": f"{len(created)} performance(s) enregistrée(s)."}, status=status.HTTP_201_CREATED)
+        return Response({
+            "message": f"{len(created)} performance(s) enregistrée(s).",
+            "created": created,
+            "skipped": skipped
+        }, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
@@ -1523,6 +1547,8 @@ def export_coach_calendar(request, coach_id):
 @permission_classes([IsAuthenticated])
 def update_inscription_status(request, inscription_id):
     ins = get_object_or_404(Inscription, id=inscription_id)
+    if ins.seance.coach.user != request.user:
+        return Response({"error": "Action non autorisée."}, status=status.HTTP_403_FORBIDDEN)
     ancien_statut = ins.statut
     nouveau_statut = request.data.get('statut')
     Inscription.objects.filter(id=inscription_id).update(statut=nouveau_statut)
@@ -1543,6 +1569,8 @@ def update_inscription_status(request, inscription_id):
 @permission_classes([IsAuthenticated])
 def remove_participant(request, inscription_id):
     ins = get_object_or_404(Inscription, id=inscription_id)
+    if ins.seance.coach.user != request.user:
+        return Response({"error": "Action non autorisée."}, status=status.HTTP_403_FORBIDDEN)
     coach = ins.seance.coach
     client_name = f"{ins.client.prenom} {ins.client.nom}"
     seance = ins.seance
@@ -1571,7 +1599,9 @@ class MarquerSeanceRateeView(APIView):
         seance = get_object_or_404(Seance, id=seance_id)
 
         inscription = seance.inscriptions.filter(client=athlete).first()
-        if inscription and inscription.statut != 'ABSENT':
+        if not inscription:
+            return Response({"error": "Action non autorisée"}, status=403)
+        if inscription.statut != 'ABSENT':
             inscription.statut = 'ABSENT'
             inscription.save()
             print(f"  Inscription de l'athlète {athlete.id} passée en ABSENT.")
@@ -1704,13 +1734,15 @@ class CreateOrderView(APIView):
             # On récupère le profil athlète de l'utilisateur connecté
             client = request.user.client_profile
             data = request.data
+            montant_ttc = data.get('montant_ttc', data.get('total', 0))
 
             # 1. Création de la commande principale
             commande = Commande.objects.create(
                 client=client,
                 adresse_livraison=data.get('adresse_livraison', ''),
-                total=data.get('total', 0),
-                statut='PENDING',
+                montant_ttc=montant_ttc,
+                montant_ht=round(float(montant_ttc or 0) / 1.2, 2),
+                status='PENDING',
 
             )
 

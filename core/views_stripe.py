@@ -1,4 +1,5 @@
 import json
+import logging
 import stripe
 from django.conf import settings
 from django.http import HttpResponse
@@ -11,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Commande, Facture, ClientInvitation, Notification, Coach
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+logger = logging.getLogger(__name__)
 
 
 def stripe_connect_relay(request):
@@ -64,7 +66,7 @@ def stripe_webhook(request):
                     commande.save()
                     Facture.objects.get_or_create(commande=commande)
             except Commande.DoesNotExist:
-                pass
+                logger.warning("stripe_webhook: commande introuvable", extra={"commande_id": commande_id})
 
         elif checkout_type == 'invitation':
             token = metadata.get('invitation_token')
@@ -95,7 +97,7 @@ def stripe_webhook(request):
                 coach.stripe_subscription_id = session.get('subscription')
                 coach.save()
             except Coach.DoesNotExist:
-                pass
+                logger.warning("stripe_webhook: coach introuvable pour subscription", extra={"coach_id": coach_id})
 
     # 3. Annulation de l'abonnement du coach (Downgrade vers free)
     elif event_dict['type'] == 'customer.subscription.deleted':
@@ -106,7 +108,10 @@ def stripe_webhook(request):
             coach.stripe_subscription_id = None
             coach.save()
         except Coach.DoesNotExist:
-            pass
+            logger.warning(
+                "stripe_webhook: coach introuvable pour suppression abonnement",
+                extra={"subscription_id": subscription.get('id')}
+            )
     # 4. Vérification de la complétion du compte Stripe Connect
     elif event_dict['type'] == 'account.updated':
         account = event_dict['data']['object']
@@ -117,7 +122,10 @@ def stripe_webhook(request):
                     coach.stripe_onboarding_complete = True
                     coach.save()
             except Coach.DoesNotExist:
-                pass
+                logger.warning(
+                    "stripe_webhook: coach introuvable pour account.updated",
+                    extra={"stripe_account_id": account.get('id')}
+                )
 
     return HttpResponse(status=200)
 class CreatePlatformSubscriptionView(APIView):

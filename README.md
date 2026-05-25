@@ -1,6 +1,6 @@
 # Athlo - Back-End 
 
-Ce dépôt contient le **Back-End** de l'application Athlo, développé avec **Django 6** et **Django REST Framework**.
+Ce dépôt contient le **Back-End** de l'application Athlo, développé avec **Django 5.2** et **Django REST Framework**.
 
 Il expose des **API REST** pour que le Front-End et d'autres clients puissent interagir avec les données de l’application.
 
@@ -21,7 +21,7 @@ Le projet fait partie du programme **ArchiWeb 2026** et vise à fournir une arch
 ## Stack technique
 
 - **Python 3.11+**
-- **Django 6** – framework web
+- **Django 5.2** – framework web
 - **Django REST Framework** – API REST
 - **django-cors-headers** – gestion CORS pour le Front
 - **djangorestframework-simplejwt** – authentification JWT

@@ -283,7 +283,7 @@ class ProspectCheckoutPayView(APIView):
                 "offer_type": offer_type,
                 "offer_label": self.OFFER_LABELS[offer_type],
                 "amount": amount,
-                "payment_status": "success", # On part du principe que s'ils arrivent au bout, c'est payé
+                "payment_intent_id": intent.id,
             }
             checkout_token = signing.dumps(token_payload, salt=CHECKOUT_SIGNER_SALT)
 
@@ -366,8 +366,42 @@ class ProspectActivateAthleteView(APIView):
         if payload.get("user_id") != user.id:
             return Response({"message": "Session de paiement non autorisée."}, status=status.HTTP_403_FORBIDDEN)
 
-        if payload.get("payment_status") != "success":
-            return Response({"message": "Le paiement n'est pas validé."}, status=status.HTTP_400_BAD_REQUEST)
+        expected_payment_intent_id = payload.get("payment_intent_id")
+        provided_payment_intent_id = data.get("payment_intent_id")
+
+        if not expected_payment_intent_id or provided_payment_intent_id != expected_payment_intent_id:
+            return Response({"message": "Paiement invalide ou session altérée."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            intent = stripe.PaymentIntent.retrieve(provided_payment_intent_id)
+        except Exception:
+            return Response({"message": "Impossible de vérifier le paiement Stripe."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if intent.status != 'succeeded':
+            return Response({"message": "Le paiement Stripe n'est pas confirmé."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_metadata = intent.metadata
+        if raw_metadata is None:
+            intent_metadata = {}
+        elif isinstance(raw_metadata, dict):
+            intent_metadata = raw_metadata
+        elif hasattr(raw_metadata, 'to_dict_recursive'):
+            intent_metadata = raw_metadata.to_dict_recursive()
+        elif hasattr(raw_metadata, '_data') and isinstance(raw_metadata._data, dict):
+            intent_metadata = dict(raw_metadata._data)
+        else:
+            intent_metadata = {}
+        expected_amount_cents = int(float(payload.get("amount", 0)) * 100)
+
+        metadata_ok = (
+            intent_metadata.get('checkout_type') == 'prospect'
+            and str(intent_metadata.get('user_id')) == str(user.id)
+            and str(intent_metadata.get('coach_id')) == str(payload.get("coach_id"))
+            and str(intent_metadata.get('offer_type')) == str(payload.get("offer_type"))
+        )
+
+        if not metadata_ok or intent.amount != expected_amount_cents:
+            return Response({"message": "Paiement non conforme à la session de checkout."}, status=status.HTTP_400_BAD_REQUEST)
 
         coach = get_object_or_404(Coach, id=payload.get("coach_id"))
 
@@ -618,16 +652,38 @@ class InvitationSetPasswordView(APIView):
 
         # If invitation is still pending, try to verify payment directly via Stripe
         # (covers mobile flow where webhook may not have fired yet)
+        payment_intent_id = (data.get('payment_intent_id') or '').strip() or None
         if invitation.status == 'pending':
-            payment_intent_id = data.get('payment_intent_id', '').strip()
             if payment_intent_id:
                 try:
                     intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-                    if intent.status == 'succeeded':
-                        invitation.status = 'paid'
-                        invitation.payment_status = 'success'
-                        invitation.paid_at = timezone.now()
-                        invitation.save(update_fields=['status', 'payment_status', 'paid_at'])
+                    if intent.status != 'succeeded':
+                        return Response({"message": "Paiement non confirmé."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    # Normalise metadata (StripeObject in SDK v15+)
+                    raw_metadata = intent.metadata
+                    if raw_metadata is None:
+                        intent_metadata = {}
+                    elif isinstance(raw_metadata, dict):
+                        intent_metadata = raw_metadata
+                    elif hasattr(raw_metadata, 'to_dict_recursive'):
+                        intent_metadata = raw_metadata.to_dict_recursive()
+                    elif hasattr(raw_metadata, '_data') and isinstance(raw_metadata._data, dict):
+                        intent_metadata = dict(raw_metadata._data)
+                    else:
+                        intent_metadata = {}
+
+                    if intent_metadata.get('checkout_type') != 'invitation':
+                        return Response({"message": "Ce paiement ne correspond pas à une invitation."}, status=status.HTTP_400_BAD_REQUEST)
+                    if intent_metadata.get('invitation_token') != str(invitation.token):
+                        return Response({"message": "Ce paiement ne correspond pas à cette invitation."}, status=status.HTTP_400_BAD_REQUEST)
+                    if intent.amount != int(invitation.amount * 100):
+                        return Response({"message": "Le montant du paiement ne correspond pas à l'offre."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    invitation.status = 'paid'
+                    invitation.payment_status = 'success'
+                    invitation.paid_at = timezone.now()
+                    invitation.save(update_fields=['status', 'payment_status', 'paid_at'])
                 except Exception:
                     pass
 
@@ -653,6 +709,38 @@ class InvitationSetPasswordView(APIView):
         invitation.status = 'activated'
         invitation.activated_at = timezone.now()
         invitation.save(update_fields=['status', 'activated_at'])
+
+        # Création de la Commande + Facture (absentes avant ce correctif)
+        try:
+            montant_ttc = invitation.amount
+            if payment_intent_id:
+                commande, created = Commande.objects.get_or_create(
+                    stripe_payment_intent_id=payment_intent_id,
+                    defaults={
+                        'client': invitation.client,
+                        'coach': invitation.coach,
+                        'offre_label': invitation.offer_label,
+                        'offre_type': invitation.offer_type,
+                        'montant_ttc': montant_ttc,
+                        'montant_ht': round(montant_ttc / 1.2, 2),
+                        'status': 'PAID',
+                    }
+                )
+            else:
+                commande = Commande.objects.create(
+                    client=invitation.client,
+                    coach=invitation.coach,
+                    offre_label=invitation.offer_label,
+                    offre_type=invitation.offer_type,
+                    montant_ttc=montant_ttc,
+                    montant_ht=round(montant_ttc / 1.2, 2),
+                    status='PAID',
+                )
+                created = True
+            if created:
+                Facture.objects.create(commande=commande)
+        except Exception:
+            pass  # La facturation ne doit pas bloquer l'activation
 
         platform = request.data.get("platform", "web")
         login_link = link_for_platform(platform, mobile_path="(tabs)/athlete", web_path="login")
