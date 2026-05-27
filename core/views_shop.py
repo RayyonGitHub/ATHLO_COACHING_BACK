@@ -4,7 +4,7 @@ from django.db import transaction
 from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import Produit, CategorieProduit, Commande, LigneCommande
+from .models import Produit, CategorieProduit, Commande, LigneCommande, Facture
 from .serializers import ProduitSerializer, CategorieProduitSerializer
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -73,7 +73,6 @@ class CreateShopPaymentIntentView(APIView):
             client=request.user.client_profile,
             coach=premier_produit.coach,
             offre_label="Achat Boutique",
-            offre_type="shop",
             status='PENDING'
         )
         
@@ -120,3 +119,38 @@ class CreateShopPaymentIntentView(APIView):
         intent = stripe.PaymentIntent.create(**intent_kwargs)
 
         return Response({"client_secret": intent.client_secret}, status=200)
+
+
+class ShopOrderConfirmView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        payment_intent_id = request.data.get('payment_intent_id')
+        
+        if not payment_intent_id:
+            return Response({"error": "payment_intent_id requis"}, status=400)
+        
+        try:
+            intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            
+            if intent.status != 'succeeded':
+                return Response({"error": "Paiement non confirmé"}, status=400)
+            
+            commande_id = intent.metadata.get('commande_id')
+            if not commande_id:
+                return Response({"error": "Commande introuvable dans les métadonnées"}, status=400)
+            
+            commande = Commande.objects.get(id=commande_id)
+            
+            if commande.status != 'PAID':
+                commande.status = 'PAID'
+                commande.stripe_payment_intent_id = payment_intent_id
+                commande.save()
+                Facture.objects.get_or_create(commande=commande)
+            
+            return Response({"success": True, "commande_id": commande.id})
+        
+        except Commande.DoesNotExist:
+            return Response({"error": "Commande introuvable"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)

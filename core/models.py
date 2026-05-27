@@ -159,6 +159,7 @@ class Salle(models.Model):
     ville = models.CharField(max_length=100)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    coachs_bannis = models.ManyToManyField('Coach', related_name='salles_bannies', blank=True)
 
 class Programme(models.Model):
     titre = models.CharField(max_length=200, verbose_name="Titre du programme")
@@ -344,6 +345,24 @@ class NotificationAthlete(models.Model):
         ('INFO', 'Information')
     ]
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='notifications_athlete', null=True, blank=True)
+    message = models.TextField()
+    type = models.CharField(max_length=20, choices=TYPES, default='INFO')
+    est_lu = models.BooleanField(default=False)
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_creation']
+
+
+class NotificationResponsable(models.Model):
+    TYPES = [
+        ('SEANCE', 'Séance'),
+        ('COACH', 'Coach'),
+        ('SALLE', 'Salle'),
+        ('URGENT', 'Urgent'),
+        ('INFO', 'Information')
+    ]
+    responsable = models.ForeignKey('ResponsableSalle', on_delete=models.CASCADE, related_name='notifications_responsable')
     message = models.TextField()
     type = models.CharField(max_length=20, choices=TYPES, default='INFO')
     est_lu = models.BooleanField(default=False)

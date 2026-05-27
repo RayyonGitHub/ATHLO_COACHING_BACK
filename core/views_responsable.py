@@ -2,9 +2,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
-from .models import ResponsableSalle, Seance, Inscription, Commande
+from .models import ResponsableSalle, Seance, Inscription, Commande, ClientInvitation, NotificationResponsable, Coach, Coach
 from datetime import datetime
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from django.db.models.functions import ExtractHour
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -51,15 +51,28 @@ class ResponsableDashboardStatsView(APIView):
             if s.inscriptions.filter(statut__in=['CONFIRME', 'PRESENT']).count() >= s.capacite_max
         )
 
-        # 7. Revenus générés aujourd'hui (Ventes des coachs affiliés à cette salle)
+        # 7. Revenus générés aujourd'hui
         coachs_salle = salle.coachs_affilies.all()
-        revenus = sum(
+
+        # Abonnements prospects (Commande avec offre_type rempli)
+        revenus_abonnements = sum(
             c.montant_ttc for c in Commande.objects.filter(
-                coach__in=coachs_salle, 
+                coach__in=coachs_salle,
                 status='PAID',
                 date_commande__date=aujourd_hui
-            )
+            ).exclude(Q(offre_type__isnull=True) | Q(offre_type=''))
         )
+
+        # Boutique et extras (Commande sans offre_type = achats produits)
+        revenus_boutique = sum(
+            c.montant_ttc for c in Commande.objects.filter(
+                coach__in=coachs_salle,
+                status='PAID',
+                date_commande__date=aujourd_hui
+            ).filter(Q(offre_type__isnull=True) | Q(offre_type=''))
+        )
+
+        revenus_generes = revenus_abonnements + revenus_boutique
 
         return Response({
             "salle_nom": salle.nom,
@@ -70,7 +83,9 @@ class ResponsableDashboardStatsView(APIView):
                 "taux_occupation": round(taux_occupation, 1),
                 "reservations_attente": reservations_attente,
                 "cours_complets": cours_complets,
-                "revenus_generes": revenus
+                "revenus_generes": revenus_generes,
+                "revenus_abonnements": revenus_abonnements,
+                "revenus_boutique": revenus_boutique
             }
         })
 
@@ -321,3 +336,122 @@ class ResponsableChangePasswordView(APIView):
         user.set_password(new_password)
         user.save()
         return Response({"message": "Mot de passe modifié avec succès"})
+
+
+class ResponsableNotificationListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            responsable = request.user.responsable_profile
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+        
+        from .serializers import NotificationResponsableSerializer
+        notifications = NotificationResponsable.objects.filter(responsable=responsable).order_by('-date_creation')[:50]
+        serializer = NotificationResponsableSerializer(notifications, many=True)
+        return Response(serializer.data)
+
+
+class ResponsableNotificationDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            responsable = request.user.responsable_profile
+            notif = NotificationResponsable.objects.get(id=pk, responsable=responsable)
+            notif.est_lu = request.data.get('est_lu', True)
+            notif.save()
+            return Response({"message": "Notification mise à jour"})
+        except NotificationResponsable.DoesNotExist:
+            return Response({"error": "Notification introuvable."}, status=404)
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+
+
+class ResponsableCoachListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            responsable = request.user.responsable_profile
+            salle = responsable.salle
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+        
+        coachs = salle.coachs_affilies.all()
+        data = []
+        for coach in coachs:
+            data.append({
+                "id": coach.id,
+                "nom": f"{coach.user.first_name} {coach.user.last_name}",
+                "email": coach.user.email,
+                "telephone": coach.telephone,
+                "ville": coach.ville,
+                "specialite": coach.specialite,
+                "specialites_tags": coach.specialites_tags
+            })
+        return Response(data)
+
+
+class ResponsableCoachDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, coach_id):
+        try:
+            responsable = request.user.responsable_profile
+            salle = responsable.salle
+            coach = Coach.objects.get(id=coach_id, salles=salle)
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+        except Coach.DoesNotExist:
+            return Response({"error": "Coach non trouvé ou non affilié à votre salle."}, status=404)
+        
+        return Response({
+            "id": coach.id,
+            "prenom": coach.user.first_name,
+            "nom": coach.user.last_name,
+            "email": coach.user.email,
+            "telephone": coach.telephone,
+            "ville": coach.ville,
+            "specialite": coach.specialite,
+            "specialites_tags": coach.specialites_tags
+        })
+    
+    def patch(self, request, coach_id):
+        try:
+            responsable = request.user.responsable_profile
+            salle = responsable.salle
+            coach = Coach.objects.get(id=coach_id, salles=salle)
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+        except Coach.DoesNotExist:
+            return Response({"error": "Coach non trouvé ou non affilié à votre salle."}, status=404)
+        
+        coach.telephone = request.data.get('telephone', coach.telephone)
+        coach.ville = request.data.get('ville', coach.ville)
+        coach.specialite = request.data.get('specialite', coach.specialite)
+        if 'specialites_tags' in request.data:
+            coach.specialites_tags = request.data.get('specialites_tags')
+        coach.save()
+        
+        user = coach.user
+        user.first_name = request.data.get('prenom', user.first_name)
+        user.last_name = request.data.get('nom', user.last_name)
+        user.save()
+        
+        return Response({"message": "Coach mis à jour avec succès"})
+    
+    def delete(self, request, coach_id):
+        try:
+            responsable = request.user.responsable_profile
+            salle = responsable.salle
+            coach = Coach.objects.get(id=coach_id, salles=salle)
+        except ResponsableSalle.DoesNotExist:
+            return Response({"error": "Profil responsable introuvable."}, status=403)
+        except Coach.DoesNotExist:
+            return Response({"error": "Coach non trouvé ou non affilié à votre salle."}, status=404)
+        
+        coach.salles.remove(salle)
+        salle.coachs_bannis.add(coach)
+        return Response({"message": "Coach définitivement retiré de la salle"})
