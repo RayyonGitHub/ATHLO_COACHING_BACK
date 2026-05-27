@@ -425,7 +425,7 @@ class DevisSerializer(serializers.ModelSerializer):
 
     def get_invitation_token(self, obj):
         if obj.invitation_liee:
-            return obj.invitation_liee.token
+            return str(obj.invitation_liee.token)
         return None
 
 

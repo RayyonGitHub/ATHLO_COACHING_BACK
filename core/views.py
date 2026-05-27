@@ -17,7 +17,6 @@ from django.core.mail import send_mail
 from .email_utils import link_for_platform, send_html_email
 from django.conf import settings
 from icalendar import Calendar, Event
-from decimal import Decimal
 from rest_framework import viewsets, status, generics, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -383,18 +382,25 @@ class CoachTraiterDevisView(APIView):
 
         nouveau_statut = 'accepte' if action_value == 'accepter' else 'refuse'
 
-        devis = get_object_or_404(Devis.objects.select_related('coach', 'coach__user'), id=devis_id, coach=coach)
+        devis = get_object_or_404(Devis.objects.select_related('coach', 'coach__user', 'prospect'), id=devis_id, coach=coach)
         if devis.statut in ('accepte', 'refuse'):
             return Response({"error": "Ce devis a déjà été traité."}, status=400)
 
+        update_fields = ['statut']
         devis.statut = nouveau_statut
-        devis.save(update_fields=['statut'])
+        if nouveau_statut == 'accepte':
+            if not devis.prix_propose or devis.prix_propose <= 0:
+                return Response({"error": "Ce devis n'a pas de prix proposé par le prospect."}, status=400)
+
+        devis.save(update_fields=update_fields)
 
         return Response(
             {
                 "message": "Devis traité avec succès.",
                 "devis_id": devis.id,
                 "devis_statut": devis.statut,
+                "prix_propose": devis.prix_propose,
+                "devis": DevisSerializer(devis).data,
             },
             status=200,
         )

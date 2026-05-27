@@ -421,8 +421,15 @@ class Devis(models.Model):
         ('accepte', 'Accepté'),
         ('refuse', 'Refusé'),
     ]
+    OFFRE_CHOICES = [
+        ('seance', 'Séance individuelle'),
+        ('pack', 'Pack'),
+        ('abonnement', 'Abonnement'),
+    ]
 
     coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='devis')
+    prospect = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='devis_demandes')
+    offre_type = models.CharField(max_length=20, choices=OFFRE_CHOICES, default='seance')
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField()
@@ -437,6 +444,7 @@ class Devis(models.Model):
     pathologies_blessures = models.TextField(blank=True)
     message = models.TextField(blank=True)
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default="en_attente")
+    prix_propose = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     invitation_liee = models.ForeignKey(
         ClientInvitation,
         on_delete=models.SET_NULL,
