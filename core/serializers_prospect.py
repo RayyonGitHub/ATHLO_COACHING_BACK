@@ -48,6 +48,7 @@ class ProspectActivateAthleteSerializer(serializers.Serializer):
 
 class ProspectDevisCreateSerializer(serializers.Serializer):
     coach_id = serializers.IntegerField()
+    offreType = serializers.ChoiceField(choices=['seance', 'pack', 'abonnement'], default='seance')
 
     nom = serializers.CharField(max_length=100)
     prenom = serializers.CharField(max_length=100)

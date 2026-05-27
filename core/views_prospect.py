@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from django.db.models import Avg
+from django.db.models import Avg, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.mail import send_mail
@@ -225,6 +225,7 @@ class ProspectCheckoutPayView(APIView):
         'seance': 'Séance unique',
         'pack': 'Pack 10 séances',
         'abonnement': 'Abonnement mensuel',
+        'devis': 'Devis personnalisé',
     }
 
     def post(self, request):
@@ -238,7 +239,7 @@ class ProspectCheckoutPayView(APIView):
         coach_id = request.data.get('coach_id')
         offer_type = (request.data.get('offer_type') or '').strip().lower()
 
-        if offer_type not in ['seance', 'pack', 'abonnement']:
+        if offer_type not in ['seance', 'pack', 'abonnement', 'devis']:
             return Response({"message": "Type d'offre invalide."}, status=status.HTTP_400_BAD_REQUEST)
 
         coach = get_object_or_404(Coach.objects.select_related('user'), id=coach_id)
@@ -247,8 +248,30 @@ class ProspectCheckoutPayView(APIView):
                 {"message": "Ce coach n'a pas encore configuré ses paiements. La transaction est impossible."}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
-        offres = _normalize_offres(coach.offres_tarifs)
-        amount = offres.get(offer_type)
+        devis = None
+        if offer_type == 'devis':
+            devis_filters = Q(id=request.data.get('devis_id'), coach=coach, statut='accepte') & (
+                Q(prospect=user) | Q(prospect__isnull=True, email__iexact=user.email)
+            )
+            devis = get_object_or_404(
+                Devis.objects.select_related('coach', 'prospect'),
+                devis_filters,
+            )
+            if devis.prospect_id is None:
+                devis.prospect = user
+                devis.save(update_fields=['prospect'])
+            if not devis.prix_propose:
+                return Response({"message": "Ce devis accepté n'a pas encore de prix proposé."}, status=status.HTTP_400_BAD_REQUEST)
+            amount = float(devis.prix_propose)
+            offer_label = {
+                'seance': 'Séance individuelle',
+                'pack': 'Pack',
+                'abonnement': 'Abonnement',
+            }.get(devis.offre_type, 'Devis personnalisé')
+        else:
+            offres = _normalize_offres(coach.offres_tarifs)
+            amount = offres.get(offer_type)
+            offer_label = self.OFFER_LABELS[offer_type]
 
         try:
             # 1. Création de l'intention de paiement Stripe
@@ -264,7 +287,8 @@ class ProspectCheckoutPayView(APIView):
                     'user_id': user.id,
                     'coach_id': coach.id,
                     'offer_type': offer_type,
-                    'offer_label': self.OFFER_LABELS[offer_type]
+                    'offer_label': offer_label,
+                    'devis_id': devis.id if devis else ''
                 }
             }
 
@@ -281,9 +305,10 @@ class ProspectCheckoutPayView(APIView):
                 "user_id": user.id,
                 "coach_id": coach.id,
                 "offer_type": offer_type,
-                "offer_label": self.OFFER_LABELS[offer_type],
+                "offer_label": offer_label,
                 "amount": amount,
                 "payment_intent_id": intent.id,
+                "devis_id": devis.id if devis else None,
             }
             checkout_token = signing.dumps(token_payload, salt=CHECKOUT_SIGNER_SALT)
 
@@ -294,7 +319,7 @@ class ProspectCheckoutPayView(APIView):
                 "coach": _serialize_public_coach(coach),
                 "offer": {
                     "type": offer_type,
-                    "label": self.OFFER_LABELS[offer_type],
+                    "label": offer_label,
                     "price": amount,
                 }
             }, status=status.HTTP_200_OK)
@@ -464,6 +489,9 @@ class ProspectActivateAthleteView(APIView):
 
         # 2. Génération automatique de l'entrée Facture
         Facture.objects.create(commande=commande)
+
+        if payload.get("devis_id"):
+            Devis.objects.filter(id=payload.get("devis_id"), prospect=user, statut='accepte').update(invitation_liee=None)
 
         # 3. Si c'est un pack, on crédite le solde de l'athlète
         if payload.get("offer_type") == 'pack':
@@ -820,13 +848,19 @@ class ProspectDemandeDevisView(APIView):
     def get(self, request):
         email = (request.query_params.get('email') or '').strip()
 
-        if not email:
+        if request.user.is_authenticated:
+            filters = Q(prospect=request.user)
+            if email:
+                filters |= Q(prospect__isnull=True, email__iexact=email)
+            devis = Devis.objects.filter(filters).select_related('coach__user', 'invitation_liee').distinct().order_by('-id')
+        elif email:
+            devis = Devis.objects.filter(email__iexact=email).select_related('coach__user', 'invitation_liee').order_by('-id')
+        else:
             return Response(
                 {"message": "Email manquant pour récupérer l'historique."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        devis = Devis.objects.filter(email__iexact=email).select_related('coach__user', 'invitation_liee').order_by('-id')
         serializer = DevisSerializer(devis, many=True)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -837,9 +871,18 @@ class ProspectDemandeDevisView(APIView):
 
         data = serializer.validated_data
         coach = get_object_or_404(Coach, id=data['coach_id'])
+        budget = str(data.get('budget', '')).replace(',', '.').strip()
+        try:
+            prix_propose = float(budget)
+        except (TypeError, ValueError):
+            return Response({"message": "Prix proposé invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        if prix_propose <= 0:
+            return Response({"message": "Le prix proposé doit être supérieur à 0."}, status=status.HTTP_400_BAD_REQUEST)
 
         devis = Devis.objects.create(
             coach=coach,
+            prospect=request.user if request.user.is_authenticated else None,
+            offre_type=data.get('offreType', 'seance'),
             nom=data['nom'],
             prenom=data['prenom'],
             email=data['email'],
@@ -851,9 +894,20 @@ class ProspectDemandeDevisView(APIView):
             type_entrainement=data.get('typeEntrainement', ''),
             objectif_sportif=data.get('objectifSportif', ''),
             budget=data.get('budget', ''),
+            prix_propose=prix_propose,
             pathologies_blessures=data.get('pathologiesBlessures', ''),
             message=data.get('message', ''),
         )
+
+        try:
+            Notification.objects.create(
+                coach=coach,
+                seance=None,
+                type='INFO',
+                message=f"Nouvelle demande de devis ({devis.get_offre_type_display()}) de {devis.prenom} {devis.nom} pour {prix_propose:.2f}€.",
+            )
+        except Exception:
+            pass
 
         return Response(
             {
