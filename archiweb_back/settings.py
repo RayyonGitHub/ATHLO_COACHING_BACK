@@ -25,9 +25,7 @@ DEBUG = env_bool('DJANGO_DEBUG', False)
 STRAVA_CLIENT_ID = os.getenv('STRAVA_CLIENT_ID')
 STRAVA_CLIENT_SECRET = os.getenv('STRAVA_CLIENT_SECRET')
 
-ALLOWED_HOSTS = [
-    h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver').split(',') if h.strip()
-]
+ALLOWED_HOSTS = ['*']
 
 # --- Application definition ---
 
