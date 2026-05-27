@@ -52,7 +52,12 @@ class ResponsableDashboardStatsView(APIView):
         )
 
         # 7. Revenus générés aujourd'hui
-        coachs_salle = salle.coachs_affilies.all()
+        coachs_salle = salle.coachs_affilies.filter(
+            user__client_profile__isnull=True,
+            user__responsable_profile__isnull=True,
+            user__is_staff=False,
+            user__is_superuser=False,
+        )
 
         # Abonnements prospects (Commande avec offre_type rempli)
         revenus_abonnements = sum(
@@ -110,7 +115,14 @@ class ResponsablePlanningView(APIView):
             date_cible = timezone.now().date()
 
         # Récupérer les séances de CETTE salle, pour CETTE date
-        seances = Seance.objects.filter(salle=salle, jour_prevu=date_cible).select_related('coach__user').order_by('heure_debut')
+        seances = Seance.objects.filter(
+            salle=salle,
+            jour_prevu=date_cible,
+            coach__user__client_profile__isnull=True,
+            coach__user__responsable_profile__isnull=True,
+            coach__user__is_staff=False,
+            coach__user__is_superuser=False,
+        ).select_related('coach__user').order_by('heure_debut')
 
         # Formater les données
         planning_data = []
@@ -146,7 +158,12 @@ class ResponsableCoachSupervisionView(APIView):
         debut_mois = aujourd_hui.replace(day=1)
 
         # Récupérer les coachs affiliés à cette salle
-        coachs = salle.coachs_affilies.all()
+        coachs = salle.coachs_affilies.filter(
+            user__client_profile__isnull=True,
+            user__responsable_profile__isnull=True,
+            user__is_staff=False,
+            user__is_superuser=False,
+        )
         coach_data = []
 
         for coach in coachs:
@@ -185,6 +202,7 @@ class ResponsableCoachSupervisionView(APIView):
 
             coach_data.append({
                 "id": coach.id,
+                "role": "coach",
                 "nom": f"{coach.user.first_name} {coach.user.last_name}",
                 "seances_jour": nb_seances_jour,
                 "seances_mois": nb_seances_mois,
@@ -222,7 +240,15 @@ class ResponsableStatistiquesView(APIView):
         debut_mois = aujourd_hui.replace(day=1)
 
         # 1. Toutes les séances du mois pour cette salle
-        seances_mois = Seance.objects.filter(salle=salle, jour_prevu__gte=debut_mois, jour_prevu__lte=aujourd_hui)
+        seances_mois = Seance.objects.filter(
+            salle=salle,
+            jour_prevu__gte=debut_mois,
+            jour_prevu__lte=aujourd_hui,
+            coach__user__client_profile__isnull=True,
+            coach__user__responsable_profile__isnull=True,
+            coach__user__is_staff=False,
+            coach__user__is_superuser=False,
+        )
 
         # 2. Fréquentation (inscriptions confirmées ou présentes)
         inscriptions_mois = Inscription.objects.filter(
@@ -265,7 +291,13 @@ class ResponsableStatistiquesView(APIView):
 
         # 6. Revenus générés ce mois-ci par les coachs de la salle
         from .models import Coach
-        coachs_salle = Coach.objects.filter(salles=salle)
+        coachs_salle = Coach.objects.filter(
+            salles=salle,
+            user__client_profile__isnull=True,
+            user__responsable_profile__isnull=True,
+            user__is_staff=False,
+            user__is_superuser=False,
+        )
         revenus_mois = Commande.objects.filter(
             coach__in=coachs_salle, 
             status='PAID', 
@@ -379,11 +411,17 @@ class ResponsableCoachListView(APIView):
         except ResponsableSalle.DoesNotExist:
             return Response({"error": "Profil responsable introuvable."}, status=403)
         
-        coachs = salle.coachs_affilies.all()
+        coachs = salle.coachs_affilies.filter(
+            user__client_profile__isnull=True,
+            user__responsable_profile__isnull=True,
+            user__is_staff=False,
+            user__is_superuser=False,
+        )
         data = []
         for coach in coachs:
             data.append({
                 "id": coach.id,
+                "role": "coach",
                 "nom": f"{coach.user.first_name} {coach.user.last_name}",
                 "email": coach.user.email,
                 "telephone": coach.telephone,
@@ -401,7 +439,14 @@ class ResponsableCoachDetailView(APIView):
         try:
             responsable = request.user.responsable_profile
             salle = responsable.salle
-            coach = Coach.objects.get(id=coach_id, salles=salle)
+            coach = Coach.objects.get(
+                id=coach_id,
+                salles=salle,
+                user__client_profile__isnull=True,
+                user__responsable_profile__isnull=True,
+                user__is_staff=False,
+                user__is_superuser=False,
+            )
         except ResponsableSalle.DoesNotExist:
             return Response({"error": "Profil responsable introuvable."}, status=403)
         except Coach.DoesNotExist:
@@ -422,7 +467,14 @@ class ResponsableCoachDetailView(APIView):
         try:
             responsable = request.user.responsable_profile
             salle = responsable.salle
-            coach = Coach.objects.get(id=coach_id, salles=salle)
+            coach = Coach.objects.get(
+                id=coach_id,
+                salles=salle,
+                user__client_profile__isnull=True,
+                user__responsable_profile__isnull=True,
+                user__is_staff=False,
+                user__is_superuser=False,
+            )
         except ResponsableSalle.DoesNotExist:
             return Response({"error": "Profil responsable introuvable."}, status=403)
         except Coach.DoesNotExist:
@@ -446,7 +498,14 @@ class ResponsableCoachDetailView(APIView):
         try:
             responsable = request.user.responsable_profile
             salle = responsable.salle
-            coach = Coach.objects.get(id=coach_id, salles=salle)
+            coach = Coach.objects.get(
+                id=coach_id,
+                salles=salle,
+                user__client_profile__isnull=True,
+                user__responsable_profile__isnull=True,
+                user__is_staff=False,
+                user__is_superuser=False,
+            )
         except ResponsableSalle.DoesNotExist:
             return Response({"error": "Profil responsable introuvable."}, status=403)
         except Coach.DoesNotExist:

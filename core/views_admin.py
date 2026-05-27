@@ -52,8 +52,20 @@ def admin_stats_view(request):
     first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     # Stats de base
-    total_coaches = User.objects.filter(coach_profile__isnull=False).count()
-    total_athletes = User.objects.filter(client_profile__isnull=False).count()
+    total_coaches = User.objects.filter(
+        coach_profile__isnull=False,
+        client_profile__isnull=True,
+        responsable_profile__isnull=True,
+        is_staff=False,
+        is_superuser=False,
+    ).count()
+    total_athletes = User.objects.filter(
+        client_profile__isnull=False,
+        coach_profile__isnull=True,
+        responsable_profile__isnull=True,
+        is_staff=False,
+        is_superuser=False,
+    ).count()
     gym_partners = Salle.objects.count()
 
     # Revenu Total (Vrai calcul)
@@ -67,7 +79,13 @@ def admin_stats_view(request):
     ).aggregate(total=Sum('montant_ttc'))['total'] or 0.0
 
     # Inscriptions ce mois-ci (Athlètes)
-    registrations_this_month = Client.objects.filter(date_creation__gte=first_day_of_month).count()
+    registrations_this_month = Client.objects.filter(
+        user__coach_profile__isnull=True,
+        user__responsable_profile__isnull=True,
+        user__is_staff=False,
+        user__is_superuser=False,
+        date_creation__gte=first_day_of_month
+    ).count()
 
     return Response({
         "total_coaches": total_coaches,
@@ -269,14 +287,25 @@ def admin_toggle_user_status(request, pk):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsSystemAdmin])
 def admin_coach_list(request):
-    coaches = User.objects.filter(coach_profile__isnull=False).select_related('coach_profile')
+    coaches = User.objects.filter(
+        coach_profile__isnull=False,
+        client_profile__isnull=True,
+        responsable_profile__isnull=True,
+        is_staff=False,
+        is_superuser=False,
+    ).select_related('coach_profile')
     data = []
     
     for u in coaches:
         coach_profile = u.coach_profile
         
         # 1. Nombre d'athlètes affiliés à ce coach
-        nb_clients = coach_profile.clients.count()
+        nb_clients = coach_profile.clients.filter(
+            user__coach_profile__isnull=True,
+            user__responsable_profile__isnull=True,
+            user__is_staff=False,
+            user__is_superuser=False,
+        ).count()
         
         # 2. Revenus générés (Somme des commandes 'PAID' pour ce coach)
         revenus = Commande.objects.filter(
@@ -293,6 +322,7 @@ def admin_coach_list(request):
 
         data.append({
             "id": u.id, 
+            "role": "coach",
             "first_name": u.first_name, 
             "last_name": u.last_name,
             "name": f"{u.first_name} {u.last_name}".strip() or u.email, 
@@ -312,7 +342,12 @@ def admin_coach_list(request):
 @permission_classes([IsSystemAdmin])
 def admin_athlete_list(request):
     # On récupère les clients avec leurs infos user et coach pour optimiser la requête
-    clients = Client.objects.select_related('user', 'coach__user').all().order_by('-date_creation')
+    clients = Client.objects.select_related('user', 'coach__user').filter(
+        user__coach_profile__isnull=True,
+        user__responsable_profile__isnull=True,
+        user__is_staff=False,
+        user__is_superuser=False,
+    ).order_by('-date_creation')
     data = []
     for c in clients:
         coach_name = "Aucun"
@@ -322,6 +357,7 @@ def admin_athlete_list(request):
         data.append({
             "id": c.user.id,
             "client_id": c.id,
+            "role": "athlete",
             "name": f"{c.prenom} {c.nom}",
             "email": c.email,
             "coach_name": coach_name,
@@ -361,7 +397,14 @@ def admin_delete_prospect(request, pk):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsSystemAdmin])
 def admin_delete_athlete(request, pk):
-    User.objects.filter(id=pk, client_profile__isnull=False).delete()
+    User.objects.filter(
+        id=pk,
+        client_profile__isnull=False,
+        coach_profile__isnull=True,
+        responsable_profile__isnull=True,
+        is_staff=False,
+        is_superuser=False,
+    ).delete()
     return Response({"message": "Supprimé"})
 
 @api_view(['POST'])
