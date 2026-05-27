@@ -6,6 +6,10 @@ from django.utils import timezone
 
 from .google_calendar import exchange_code_for_tokens
 from .models import Coach
+from django.conf import settings
+from django.contrib.auth.models import User
+from rest_framework_simplejwt.backends import TokenBackend
+from rest_framework_simplejwt.exceptions import TokenBackendError
 
 
 @api_view(['GET'])
@@ -24,10 +28,25 @@ def google_calendar_status(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
 def google_calendar_connect(request):
+    # Try to resolve the user: prefer request.user (normal auth), otherwise accept
+    # a JWT passed in the body as `access_token` for the OAuth relay flow.
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        token = request.data.get('access_token') or request.data.get('token')
+        if not token:
+            return Response({"detail": "Authentification requise."}, status=401)
+
+        try:
+            tb = TokenBackend(algorithm=settings.SIMPLE_JWT.get('ALGORITHM', 'HS256'))
+            validated = tb.decode(token, verify=True)
+            user_id = validated.get('user_id') or validated.get('user')
+            user = User.objects.get(id=user_id)
+        except Exception:
+            return Response({"detail": "Token d'accès invalide."}, status=401)
+
     # Si l'utilisateur n'a pas encore de profil coach (inscription en cours), le créer.
-    coach, _ = Coach.objects.get_or_create(user=request.user)
+    coach, _ = Coach.objects.get_or_create(user=user)
 
     code = request.data.get("code")
     if not code:
