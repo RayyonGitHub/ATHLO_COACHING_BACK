@@ -24,6 +24,8 @@ def register_view(request):
     try:
         email = request.data.get('email')
         password = request.data.get('password')
+        first_name = request.data.get('first_name', '').strip()
+        last_name = request.data.get('last_name', '').strip()
         full_name = request.data.get('fullName', '')
         role = request.data.get('role', 'prospect')
 
@@ -36,9 +38,12 @@ def register_view(request):
         if User.objects.filter(username=email).exists():
             return Response({'message': 'Un compte avec cet email existe déjà'}, status=400)
 
-        name_parts = full_name.strip().split(' ', 1)
-        first_name = name_parts[0] if len(name_parts) > 0 else ''
-        last_name = name_parts[1] if len(name_parts) > 1 else ''
+        if not first_name and full_name:
+            name_parts = full_name.strip().split(' ', 1)
+            first_name = name_parts[0] if len(name_parts) > 0 else ''
+            last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+        display_name = f"{first_name} {last_name}".strip() or full_name.strip() or email
 
         user = User.objects.create_user(
             username=email,
@@ -67,7 +72,9 @@ def register_view(request):
             'user': {
                 'id': user.id,
                 'email': user.email,
-                'name': full_name,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'name': display_name,
                 'role': role
             }
         }, status=201)
@@ -109,6 +116,8 @@ def login_view(request):
             'user': {
                 'id': user.id,
                 'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
                 'name': f"{user.first_name} {user.last_name}".strip(),
                 'role': role
             }
