@@ -4,11 +4,11 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopPaymentIntentView
+from core.views_shop import ProduitViewSet, CategorieProduitViewSet, CreateShopPaymentIntentView, ShopOrderConfirmView
 from core import views
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
 from core.views import CreateOrderView
-from core.views_responsable import ResponsableDashboardStatsView, ResponsablePlanningView, ResponsableCoachSupervisionView, ResponsableStatistiquesView, ResponsableMeView, ResponsableChangePasswordView
+from core.views_responsable import ResponsableDashboardStatsView, ResponsablePlanningView, ResponsableCoachSupervisionView, ResponsableStatistiquesView, ResponsableMeView, ResponsableChangePasswordView, ResponsableNotificationListView, ResponsableNotificationDetailView, ResponsableCoachListView, ResponsableCoachDetailView
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
@@ -193,6 +193,7 @@ urlpatterns = [
     path('api/athlete/commandes/', views.AthleteCommandeHistoryView.as_view(), name='athlete-commandes'),
     path('api/shop/my-orders/', views.AthleteCommandeHistoryView.as_view(), name='shop-my-orders'),
     path('api/shop/create-intent/', CreateShopPaymentIntentView.as_view(), name='shop-create-intent'),
+    path('api/shop/confirm-order/', ShopOrderConfirmView.as_view(), name='shop-confirm-order'),
     path('api/stripe/webhook/', stripe_webhook, name='stripe-webhook'),
     path('api/stripe/create-subscription/', CreatePlatformSubscriptionView.as_view(), name='create-subscription'),
     path('api/stripe/connect-onboarding/', CreateStripeConnectAccountView.as_view(), name='connect-onboarding'),
@@ -206,6 +207,10 @@ urlpatterns = [
     path('api/responsable/statistiques/', ResponsableStatistiquesView.as_view(), name='responsable-statistiques'),
     path('api/responsable/me/', ResponsableMeView.as_view(), name='responsable-me'),
     path('api/responsable/change-password/', ResponsableChangePasswordView.as_view(), name='responsable-change-password'),
+    path('api/responsable/notifications/', ResponsableNotificationListView.as_view(), name='responsable-notifications'),
+    path('api/responsable/notifications/<int:pk>/', ResponsableNotificationDetailView.as_view(), name='responsable-notification-detail'),
+    path('api/responsable/coachs/', ResponsableCoachListView.as_view(), name='responsable-coach-list'),
+    path('api/responsable/coachs/<int:coach_id>/', ResponsableCoachDetailView.as_view(), name='responsable-coach-detail'),
 ]
 
 if settings.DEBUG:

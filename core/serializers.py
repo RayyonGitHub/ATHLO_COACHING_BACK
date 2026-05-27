@@ -5,7 +5,7 @@ from django.db.models import Avg, Count
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
-    Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
+    Inscription, Notification, NotificationAthlete, NotificationResponsable, Salle, Avis, Devis,
     ActiviteExterne, Produit, CategorieProduit, Commande, LigneCommande, Facture
 )
 
@@ -32,7 +32,15 @@ class CoachSerializer(serializers.ModelSerializer):
             'specialite', 'ville', 'salles', 
             'platform_plan', 'stripe_account_id', 'stripe_onboarding_complete'
         ]
-        read_only_fields = ['platform_plan', 'stripe_account_id', 'stripe_onboarding_complete'] # <-- Sécurité : empêche la modification manuelle via le front
+        read_only_fields = ['platform_plan', 'stripe_account_id', 'stripe_onboarding_complete']
+    
+    def validate_salles(self, salles):
+        coach = self.instance
+        if coach:
+            for salle in salles:
+                if coach in salle.coachs_bannis.all():
+                    raise serializers.ValidationError(f"Vous avez été définitivement retiré de la salle {salle.nom}. Contactez le responsable.")
+        return salles
 # --- SERIALIZER PUBLIC POUR LES PROSPECTS ---
 class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
     duree = serializers.SerializerMethodField()
@@ -464,3 +472,9 @@ class CommandeSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'offre_label', 'offre_type', 
             'montant_ttc', 'status', 'date_commande', 'facture'
         ]
+
+
+class NotificationResponsableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationResponsable
+        fields = ['id', 'message', 'type', 'est_lu', 'date_creation']
