@@ -9,10 +9,15 @@ class RecetteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        try:
-            return Recette.objects.filter(coach=self.request.user.coach_profile)
-        except:
-            return Recette.objects.none()
+        user = self.request.user
+        if hasattr(user, 'coach_profile'):
+            return Recette.objects.filter(coach=user.coach_profile)
+        if hasattr(user, 'client_profile'):
+            lignes_payees = user.client_profile.commandes.filter(
+                status='PAID'
+            ).values_list('lignes__produit_id', flat=True)
+            return Recette.objects.filter(plans__produit_id__in=lignes_payees).distinct()
+        return Recette.objects.none()
 
     def perform_create(self, serializer):
         serializer.save(coach=self.request.user.coach_profile)
@@ -70,3 +75,19 @@ class PlanNutritionnelViewSet(viewsets.ModelViewSet):
         
         # 3. On sauvegarde le plan en lui injectant le coach ET le produit créé
         serializer.save(coach=coach, produit=produit_boutique)
+
+    def perform_update(self, serializer):
+        plan = serializer.save()
+        if plan.produit:
+            plan.produit.nom = plan.titre
+            plan.produit.description = plan.description or f"Plan nutritionnel : {plan.titre}"
+            plan.produit.prix = plan.prix
+            if plan.image:
+                plan.produit.image = plan.image
+            plan.produit.save(update_fields=['nom', 'description', 'prix', 'image'])
+
+    def perform_destroy(self, instance):
+        produit = instance.produit
+        instance.delete()
+        if produit:
+            produit.delete()
