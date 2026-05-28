@@ -94,6 +94,76 @@ class Client(models.Model):
     def __str__(self):
         return f"{self.prenom} {self.nom}"
 
+    @property
+    def contrat_actif(self):
+        today = timezone.now().date()
+        abonnement = self.contrats.filter(
+            statut='ACTIF',
+            type_contrat='ABONNEMENT',
+            date_debut__lte=today,
+            date_expiration__gte=today,
+        ).order_by('-date_expiration', '-id').first()
+        if abonnement:
+            return abonnement
+        return self.contrats.filter(
+            statut='ACTIF',
+            type_contrat__in=['PACK', 'UNITE'],
+            seances_restantes__gt=0,
+        ).order_by('date_debut', 'id').first()
+
+    @property
+    def abonnement_valide(self):
+        today = timezone.now().date()
+        return self.contrats.filter(
+            type_contrat='ABONNEMENT',
+            statut='ACTIF',
+            date_debut__lte=today,
+            date_expiration__gte=today
+        ).exists()
+
+    @property
+    def peut_reserver_seance(self):
+        return self.abonnement_valide or (self.seances_restantes or 0) > 0
+
+
+class ContratAthlete(models.Model):
+    TYPE_CHOICES = [
+        ('ABONNEMENT', 'Abonnement mensuel'),
+        ('PACK', 'Pack de seances'),
+        ('UNITE', 'Seance a l unite'),
+    ]
+    STATUT_CHOICES = [
+        ('ACTIF', 'Actif'),
+        ('EXPIRE', 'Expire'),
+        ('ANNULE', 'Annule'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='contrats')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='contrats_athletes')
+    type_contrat = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='ACTIF')
+    date_debut = models.DateField(default=timezone.now)
+    date_expiration = models.DateField(null=True, blank=True)
+    seances_total = models.PositiveIntegerField(default=0)
+    seances_restantes = models.PositiveIntegerField(default=0)
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    montant_ttc = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_debut', '-id']
+
+    @property
+    def est_valide(self):
+        if self.statut != 'ACTIF':
+            return False
+        if self.type_contrat == 'ABONNEMENT':
+            return bool(self.date_expiration and self.date_expiration >= timezone.now().date())
+        return self.seances_restantes > 0
+
+    def __str__(self):
+        return f"{self.client} - {self.type_contrat}"
+
 
 # --- Invitation paiement client créé par coach ---
 class ClientInvitation(models.Model):
@@ -384,7 +454,7 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
         return
     if not (instance.jour_prevu and instance.heure_debut):
         return
-    if athlete.seances_restantes <= 0:
+    if not athlete.peut_reserver_seance:
         raise ValidationError("Quota de séances atteint pour cet athlète.")
         
     inscription, nouvelle = Inscription.objects.get_or_create(
@@ -393,8 +463,13 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
         defaults={'statut': 'CONFIRME'}
     )
     if nouvelle:
-        athlete.seances_restantes = F('seances_restantes') - 1
-        athlete.save(update_fields=['seances_restantes'])
+        if not athlete.abonnement_valide:
+            contrat = athlete.contrats.filter(statut='ACTIF', type_contrat__in=['PACK', 'UNITE'], seances_restantes__gt=0).order_by('date_debut', 'id').first()
+            if contrat:
+                contrat.seances_restantes = F('seances_restantes') - 1
+                contrat.save(update_fields=['seances_restantes'])
+            athlete.seances_restantes = F('seances_restantes') - 1
+            athlete.save(update_fields=['seances_restantes'])
         NotificationAthlete.objects.create(
             client=athlete,
             message=f"Tu as été inscrit(e) à la séance : {instance.titre}",

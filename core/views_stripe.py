@@ -1,18 +1,155 @@
 import json
 import logging
 import stripe
+from datetime import timedelta
 from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
+from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .models import Commande, Facture, ClientInvitation, Notification, Coach
+from .models import Commande, Facture, ClientInvitation, Notification, NotificationAthlete, Coach, Client, ContratAthlete
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
+
+ATHLETE_TOPUP_LABELS = {
+    'seance': 'Seance supplementaire',
+    'pack': 'Pack 10 seances',
+    'abonnement': 'Renouvellement abonnement',
+}
+
+ATHLETE_TOPUP_CREDITS = {
+    'seance': 1,
+    'pack': 10,
+    'abonnement': 0,
+}
+
+ATHLETE_TOPUP_TYPES = {
+    'seance': 'UNITE',
+    'pack': 'PACK',
+    'abonnement': 'ABONNEMENT',
+}
+
+
+def _normalize_offres(raw_offres):
+    defaults = {'seance': 60, 'pack': 500, 'abonnement': 180}
+    if isinstance(raw_offres, str):
+        try:
+            raw_offres = json.loads(raw_offres)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_offres = {}
+    if not isinstance(raw_offres, dict):
+        return defaults
+    normalized = defaults.copy()
+    for key in normalized:
+        try:
+            normalized[key] = float(raw_offres.get(key, defaults[key]))
+        except (TypeError, ValueError):
+            normalized[key] = defaults[key]
+    return normalized
+
+
+def _stripe_object_to_dict(value):
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, 'to_dict_recursive'):
+        return value.to_dict_recursive()
+    if hasattr(value, '_data') and isinstance(value._data, dict):
+        return dict(value._data)
+    return {}
+
+
+def _grant_athlete_topup_from_intent(intent):
+    metadata = _stripe_object_to_dict(intent.get('metadata') if isinstance(intent, dict) else getattr(intent, 'metadata', None))
+    if metadata.get('checkout_type') != 'athlete_topup':
+        return None
+
+    payment_intent_id = intent.get('id') if isinstance(intent, dict) else getattr(intent, 'id', None)
+    client_id = metadata.get('client_id')
+    coach_id = metadata.get('coach_id')
+    offer_type = metadata.get('offer_type')
+    credits = int(metadata.get('credits') or ATHLETE_TOPUP_CREDITS.get(offer_type, 0))
+    amount_cents = intent.get('amount', 0) if isinstance(intent, dict) else getattr(intent, 'amount', 0)
+    amount = float(amount_cents or 0) / 100
+
+    if not payment_intent_id or offer_type not in ATHLETE_TOPUP_TYPES:
+        return None
+
+    with transaction.atomic():
+        athlete = Client.objects.select_for_update().select_related('coach', 'user').get(id=client_id)
+        existing = Commande.objects.filter(stripe_payment_intent_id=payment_intent_id).first()
+        if existing:
+            return existing
+
+        commande = Commande.objects.create(
+            client=athlete,
+            coach_id=coach_id or athlete.coach_id,
+            offre_label=ATHLETE_TOPUP_LABELS.get(offer_type, 'Achat seances'),
+            offre_type=offer_type,
+            montant_ttc=amount,
+            montant_ht=round(amount / 1.2, 2),
+            status='PAID',
+            stripe_payment_intent_id=payment_intent_id,
+        )
+        Facture.objects.get_or_create(commande=commande)
+
+        today = timezone.now().date()
+        if offer_type == 'abonnement':
+            current_subscription = athlete.contrats.filter(
+                type_contrat='ABONNEMENT',
+                statut='ACTIF',
+                date_expiration__gte=today
+            ).order_by('-date_expiration').first()
+            start_date = current_subscription.date_expiration + timedelta(days=1) if current_subscription else today
+            expiration = start_date + timedelta(days=30)
+            ContratAthlete.objects.create(
+                client=athlete,
+                coach_id=coach_id or athlete.coach_id,
+                type_contrat='ABONNEMENT',
+                statut='ACTIF',
+                date_debut=start_date,
+                date_expiration=expiration,
+                seances_total=0,
+                seances_restantes=0,
+                stripe_payment_intent_id=payment_intent_id,
+                montant_ttc=amount,
+            )
+        else:
+            ContratAthlete.objects.create(
+                client=athlete,
+                coach_id=coach_id or athlete.coach_id,
+                type_contrat=ATHLETE_TOPUP_TYPES[offer_type],
+                statut='ACTIF',
+                date_debut=today,
+                seances_total=credits,
+                seances_restantes=credits,
+                stripe_payment_intent_id=payment_intent_id,
+                montant_ttc=amount,
+            )
+            athlete.seances_restantes = F('seances_restantes') + credits
+            athlete.save(update_fields=['seances_restantes'])
+            athlete.refresh_from_db(fields=['seances_restantes'])
+
+        if athlete.coach_id:
+            Notification.objects.create(
+                coach=athlete.coach,
+                seance=None,
+                type='PAIEMENT',
+                message=f"Paiement confirme pour {athlete.prenom} {athlete.nom} : {commande.offre_label} ({amount:.2f} EUR)."
+            )
+        NotificationAthlete.objects.create(
+            client=athlete,
+            type='INFO',
+            message=f"Contrat active : {commande.offre_label}."
+        )
+        return commande
 
 
 def stripe_connect_relay(request):
@@ -83,6 +220,12 @@ def stripe_webhook(request):
                     type='PAIEMENT',
                     message=f"Paiement confirmé via invitation pour {invitation.client.prenom} ({invitation.amount}€)."
                 )
+
+        elif checkout_type == 'athlete_topup':
+            try:
+                _grant_athlete_topup_from_intent(intent)
+            except Exception as e:
+                logger.exception("stripe_webhook: athlete_topup impossible", extra={"error": str(e)})
 
     # 2. Gestion de l'abonnement PREMIUM DU COACH (Nouveau)
     elif event_dict['type'] == 'checkout.session.completed':
@@ -174,6 +317,92 @@ class CreatePlatformSubscriptionView(APIView):
         except Exception as e:
             print(f"❌ ERREUR STRIPE ABONNEMENT : {str(e)}")
             return Response({'error': str(e)}, status=400)
+
+
+class CreateAthleteTopUpPaymentIntentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        athlete = getattr(request.user, 'client_profile', None)
+        if not athlete or not athlete.coach:
+            return Response({"message": "Profil athlete ou coach introuvable."}, status=400)
+
+        offer_type = (request.data.get('offer_type') or '').strip().lower()
+        if offer_type not in ATHLETE_TOPUP_CREDITS:
+            return Response({"message": "Type d'offre invalide."}, status=400)
+
+        coach = athlete.coach
+        if not coach.stripe_account_id or not coach.stripe_onboarding_complete:
+            return Response({"message": "Le coach n'a pas configure ses paiements."}, status=400)
+
+        offres = _normalize_offres(coach.offres_tarifs)
+        amount = float(offres.get(offer_type) or 0)
+        if amount <= 0:
+            return Response({"message": "Prix de l'offre invalide."}, status=400)
+
+        try:
+            fee_amount = int((amount * 100) * 0.10) if coach.platform_plan == 'free' else 0
+            intent = stripe.PaymentIntent.create(
+                amount=int(amount * 100),
+                currency='eur',
+                automatic_payment_methods={"enabled": True},
+                application_fee_amount=fee_amount,
+                transfer_data={"destination": coach.stripe_account_id},
+                metadata={
+                    'checkout_type': 'athlete_topup',
+                    'client_id': str(athlete.id),
+                    'coach_id': str(coach.id),
+                    'offer_type': offer_type,
+                    'offer_label': ATHLETE_TOPUP_LABELS[offer_type],
+                    'credits': str(ATHLETE_TOPUP_CREDITS[offer_type]),
+                },
+            )
+            return Response({
+                "client_secret": intent.client_secret,
+                "offer": {
+                    "type": offer_type,
+                    "label": ATHLETE_TOPUP_LABELS[offer_type],
+                    "price": amount,
+                    "credits": ATHLETE_TOPUP_CREDITS[offer_type],
+                },
+            })
+        except Exception as e:
+            return Response({"message": str(e)}, status=400)
+
+
+class ConfirmAthleteTopUpPaymentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        athlete = getattr(request.user, 'client_profile', None)
+        payment_intent_id = (request.data.get('payment_intent_id') or '').strip()
+        if not athlete or not payment_intent_id:
+            return Response({"message": "Donnees invalides."}, status=400)
+
+        try:
+            intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        except Exception:
+            return Response({"message": "Paiement Stripe introuvable."}, status=400)
+
+        metadata = _stripe_object_to_dict(getattr(intent, 'metadata', None))
+        if intent.status != 'succeeded':
+            return Response({"message": "Paiement non confirme."}, status=400)
+        if metadata.get('checkout_type') != 'athlete_topup' or str(metadata.get('client_id')) != str(athlete.id):
+            return Response({"message": "Paiement non autorise."}, status=403)
+
+        commande = _grant_athlete_topup_from_intent(intent)
+        athlete.refresh_from_db(fields=['seances_restantes'])
+        contrat = athlete.contrat_actif
+        return Response({
+            "message": "Droits mis a jour.",
+            "commande_id": commande.id if commande else None,
+            "seances_restantes": athlete.seances_restantes,
+            "contrat": {
+                "type": contrat.type_contrat if contrat else None,
+                "date_expiration": contrat.date_expiration if contrat else None,
+                "seances_restantes": contrat.seances_restantes if contrat else athlete.seances_restantes,
+            }
+        })
 
 
 class CheckStripeConnectStatusView(APIView):

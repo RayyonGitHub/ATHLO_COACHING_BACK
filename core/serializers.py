@@ -1,17 +1,36 @@
 from rest_framework import serializers
 import datetime
+import json
 from django.utils import timezone
 from django.db.models import Avg, Count
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
     Inscription, Notification, NotificationAthlete, NotificationResponsable, Salle, Avis, Devis,
-    ActiviteExterne, Produit, CategorieProduit, Commande, LigneCommande, Facture
+    ActiviteExterne, Produit, CategorieProduit, Commande, LigneCommande, Facture, ContratAthlete
 )
 
 # --- PROFILS ---
+def normalize_offres_tarifs(raw_offres):
+    defaults = {"seance": 60, "pack": 500, "abonnement": 180}
+    if isinstance(raw_offres, str):
+        try:
+            raw_offres = json.loads(raw_offres)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_offres = {}
+    if not isinstance(raw_offres, dict):
+        raw_offres = {}
+    return {
+        key: raw_offres.get(key, defaults[key])
+        for key in defaults
+    }
+
+
 class ClientSerializer(serializers.ModelSerializer):
     invitation_status = serializers.SerializerMethodField()
+    coach_offres_tarifs = serializers.SerializerMethodField()
+    coach_stripe_onboarding_complete = serializers.SerializerMethodField()
+    contrat = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -21,6 +40,41 @@ class ClientSerializer(serializers.ModelSerializer):
     def get_invitation_status(self, obj):
         latest = obj.payment_invitations.order_by('-created_at').first()
         return latest.status if latest else None
+
+    def get_coach_offres_tarifs(self, obj):
+        return normalize_offres_tarifs(obj.coach.offres_tarifs if obj.coach else {})
+
+    def get_coach_stripe_onboarding_complete(self, obj):
+        return bool(obj.coach and obj.coach.stripe_onboarding_complete)
+
+    def get_contrat(self, obj):
+        contrat = obj.contrat_actif
+        if not contrat:
+            return {
+                "type": None,
+                "statut": "AUCUN",
+                "valide": False,
+                "date_expiration": None,
+                "seances_restantes": obj.seances_restantes or 0,
+                "label": "Aucun contrat actif",
+            }
+        return {
+            "id": contrat.id,
+            "type": contrat.type_contrat,
+            "statut": contrat.statut,
+            "valide": contrat.est_valide,
+            "date_expiration": contrat.date_expiration,
+            "seances_restantes": contrat.seances_restantes if contrat.type_contrat != 'ABONNEMENT' else None,
+            "label": contrat.get_type_contrat_display(),
+        }
+
+
+class ContratAthleteSerializer(serializers.ModelSerializer):
+    valide = serializers.ReadOnlyField(source='est_valide')
+
+    class Meta:
+        model = ContratAthlete
+        fields = ['id', 'type_contrat', 'statut', 'date_debut', 'date_expiration', 'seances_total', 'seances_restantes', 'montant_ttc', 'valide']
 
 class CoachSerializer(serializers.ModelSerializer):
     salles = serializers.PrimaryKeyRelatedField(many=True, queryset=Salle.objects.all(), required=False)

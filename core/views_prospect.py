@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from django.db.models import Avg, Q
+from datetime import timedelta
+from django.db.models import Avg, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.mail import send_mail
@@ -16,7 +17,7 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 import stripe
 from django.conf import settings
-from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification, ContratAthlete
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
@@ -52,6 +53,46 @@ def _normalize_offres(raw_offres):
             normalized[key] = defaults[key]
 
     return normalized
+
+
+def _grant_contract_for_offer(client, coach, offer_type, amount):
+    today = timezone.now().date()
+    offer_type = offer_type or 'seance'
+
+    if offer_type == 'abonnement':
+        current_subscription = client.contrats.filter(
+            type_contrat='ABONNEMENT',
+            statut='ACTIF',
+            date_expiration__gte=today
+        ).order_by('-date_expiration').first()
+        start_date = current_subscription.date_expiration + timedelta(days=1) if current_subscription else today
+        ContratAthlete.objects.create(
+            client=client,
+            coach=coach,
+            type_contrat='ABONNEMENT',
+            statut='ACTIF',
+            date_debut=start_date,
+            date_expiration=start_date + timedelta(days=30),
+            montant_ttc=amount or 0,
+        )
+        return
+
+    credits_by_offer = {'seance': 1, 'pack': 10, 'devis': 1}
+    credits = credits_by_offer.get(offer_type, 1)
+    contrat_type = 'PACK' if offer_type == 'pack' else 'UNITE'
+    ContratAthlete.objects.create(
+        client=client,
+        coach=coach,
+        type_contrat=contrat_type,
+        statut='ACTIF',
+        date_debut=today,
+        seances_total=credits,
+        seances_restantes=credits,
+        montant_ttc=amount or 0,
+    )
+    client.seances_restantes = F('seances_restantes') + credits
+    client.save(update_fields=['seances_restantes'])
+    client.refresh_from_db(fields=['seances_restantes'])
 
 
 def _get_specialites(coach):
@@ -497,11 +538,12 @@ class ProspectActivateAthleteView(APIView):
         if payload.get("devis_id"):
             Devis.objects.filter(id=payload.get("devis_id"), prospect=user, statut='accepte').update(invitation_liee=None)
 
-        credits_by_offer = {'seance': 1, 'pack': 10, 'abonnement': 1, 'devis': 1}
-        credits = credits_by_offer.get(payload.get("offer_type"), 0)
-        if credits:
-            athlete_profile.seances_restantes = (athlete_profile.seances_restantes or 0) + credits
-            athlete_profile.save()
+        _grant_contract_for_offer(
+            athlete_profile,
+            coach,
+            payload.get("offer_type"),
+            montant_ttc,
+        )
 
         # 4. Email de bienvenue à l'athlète
         try:
@@ -772,11 +814,12 @@ class InvitationSetPasswordView(APIView):
                 created = True
             if created:
                 Facture.objects.create(commande=commande)
-            credits_by_offer = {'seance': 1, 'pack': 10, 'abonnement': 1}
-            credits = credits_by_offer.get(invitation.offer_type, 0)
-            if credits:
-                invitation.client.seances_restantes = (invitation.client.seances_restantes or 0) + credits
-                invitation.client.save(update_fields=['seances_restantes'])
+            _grant_contract_for_offer(
+                invitation.client,
+                invitation.coach,
+                invitation.offer_type,
+                montant_ttc,
+            )
         except Exception:
             pass  # La facturation ne doit pas bloquer l'activation
 
