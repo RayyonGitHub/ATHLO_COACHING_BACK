@@ -94,15 +94,19 @@ def _serialize_public_coach(coach):
     moyenne_note = coach.avis.aggregate(avg=Avg('note'))['avg'] or 0
     avis_count = coach.avis.count()
 
-    prenom = coach.user.first_name or ""
-    nom = coach.user.last_name or coach.user.username or coach.user.email
-    full_name = f"{prenom} {nom}".strip()
+    first_name = (coach.user.first_name or "").strip()
+    last_name = (coach.user.last_name or "").strip()
+    email = coach.user.email or ""
+    full_name = f"{first_name} {last_name}".strip() or coach.user.get_full_name().strip() or coach.user.username or email
 
     payload = {
         "id": coach.id,
-        "nom": nom,
-        "prenom": prenom,
+        "nom": full_name,
+        "prenom": first_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "full_name": full_name,
+        "email": email,
         "ville": coach.ville or "",
         "specialites": _get_specialites(coach),
         "note": round(float(moyenne_note), 1) if moyenne_note else 0.0,
@@ -493,9 +497,10 @@ class ProspectActivateAthleteView(APIView):
         if payload.get("devis_id"):
             Devis.objects.filter(id=payload.get("devis_id"), prospect=user, statut='accepte').update(invitation_liee=None)
 
-        # 3. Si c'est un pack, on crédite le solde de l'athlète
-        if payload.get("offer_type") == 'pack':
-            athlete_profile.seances_restantes = (athlete_profile.seances_restantes or 0) + 10
+        credits_by_offer = {'seance': 1, 'pack': 10, 'abonnement': 1, 'devis': 1}
+        credits = credits_by_offer.get(payload.get("offer_type"), 0)
+        if credits:
+            athlete_profile.seances_restantes = (athlete_profile.seances_restantes or 0) + credits
             athlete_profile.save()
 
         # 4. Email de bienvenue à l'athlète
@@ -767,6 +772,11 @@ class InvitationSetPasswordView(APIView):
                 created = True
             if created:
                 Facture.objects.create(commande=commande)
+            credits_by_offer = {'seance': 1, 'pack': 10, 'abonnement': 1}
+            credits = credits_by_offer.get(invitation.offer_type, 0)
+            if credits:
+                invitation.client.seances_restantes = (invitation.client.seances_restantes or 0) + credits
+                invitation.client.save(update_fields=['seances_restantes'])
         except Exception:
             pass  # La facturation ne doit pas bloquer l'activation
 

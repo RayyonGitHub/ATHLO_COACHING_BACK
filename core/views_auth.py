@@ -22,7 +22,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 def register_view(request):
     """Inscription d'un nouvel utilisateur"""
     try:
-        email = request.data.get('email')
+        email = (request.data.get('email') or '').strip().lower()
         password = request.data.get('password')
         first_name = request.data.get('first_name', '').strip()
         last_name = request.data.get('last_name', '').strip()
@@ -32,10 +32,10 @@ def register_view(request):
         if not email or not password:
             return Response({'message': 'Email et mot de passe requis'}, status=400)
 
-        if User.objects.filter(email=email).exists():
+        if User.objects.filter(email__iexact=email).exists():
             return Response({'message': 'Un compte avec cet email existe déjà'}, status=400)
 
-        if User.objects.filter(username=email).exists():
+        if User.objects.filter(username__iexact=email).exists():
             return Response({'message': 'Un compte avec cet email existe déjà'}, status=400)
 
         if not first_name and full_name:
@@ -88,13 +88,13 @@ def register_view(request):
 def login_view(request):
     """Connexion personnalisée"""
     try:
-        email = request.data.get('email')
+        email = (request.data.get('email') or '').strip().lower()
         password = request.data.get('password')
 
         if not email or not password:
             return Response({'message': 'Email et mot de passe requis'}, status=400)
 
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
 
         if not user or not user.check_password(password):
             return Response({'message': 'Email ou mot de passe incorrect'}, status=401)
@@ -135,12 +135,12 @@ def forgot_password_view(request):
     Réponse volontairement générique pour éviter de révéler si l'email existe.
     """
     try:
-        email = request.data.get('email', '').strip()
+        email = request.data.get('email', '').strip().lower()
 
         if not email:
             return Response({'message': 'Adresse email requise'}, status=400)
 
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
 
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))

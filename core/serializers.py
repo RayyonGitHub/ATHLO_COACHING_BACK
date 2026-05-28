@@ -57,6 +57,10 @@ class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
 
 class ProspectCoachSerializer(serializers.ModelSerializer):
     nom = serializers.SerializerMethodField()
+    first_name = serializers.ReadOnlyField(source='user.first_name')
+    last_name = serializers.ReadOnlyField(source='user.last_name')
+    full_name = serializers.SerializerMethodField()
+    email = serializers.ReadOnlyField(source='user.email')
     specialites = serializers.SerializerMethodField()
     note = serializers.SerializerMethodField()
     avis = serializers.SerializerMethodField()
@@ -70,6 +74,10 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'nom',
+            'first_name',
+            'last_name',
+            'full_name',
+            'email',
             'specialites',
             'note',
             'avis',
@@ -82,6 +90,9 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
         ]
 
     def get_nom(self, obj):
+        return self.get_full_name(obj)
+
+    def get_full_name(self, obj):
         full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
         if full_name:
             return full_name
@@ -349,6 +360,9 @@ class AvisSerializer(serializers.ModelSerializer):
 
 class ProspectCoachListSerializer(serializers.ModelSerializer):
     nom = serializers.SerializerMethodField()
+    first_name = serializers.ReadOnlyField(source='user.first_name')
+    last_name = serializers.ReadOnlyField(source='user.last_name')
+    full_name = serializers.SerializerMethodField()
     email = serializers.ReadOnlyField(source='user.email')
     note_moyenne = serializers.SerializerMethodField()
     nombre_avis = serializers.SerializerMethodField()
@@ -360,6 +374,9 @@ class ProspectCoachListSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'nom',
+            'first_name',
+            'last_name',
+            'full_name',
             'email',
             'telephone',
             'ville',
@@ -373,8 +390,11 @@ class ProspectCoachListSerializer(serializers.ModelSerializer):
         ]
 
     def get_nom(self, obj):
+        return self.get_full_name(obj)
+
+    def get_full_name(self, obj):
         full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
-        return full_name if full_name else obj.user.username
+        return full_name if full_name else obj.user.username or obj.user.email
 
     def get_note_moyenne(self, obj):
         avis = obj.avis.all()

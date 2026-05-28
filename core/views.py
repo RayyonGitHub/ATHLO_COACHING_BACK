@@ -99,6 +99,20 @@ def calcul_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 
+def _consume_seance_credit(client):
+    if client.seances_restantes <= 0:
+        raise ValidationError({"erreur": "Quota de séances atteint pour cet athlète."})
+    client.seances_restantes = F('seances_restantes') - 1
+    client.save(update_fields=['seances_restantes'])
+    client.refresh_from_db(fields=['seances_restantes'])
+
+
+def _restore_seance_credit(client):
+    client.seances_restantes = F('seances_restantes') + 1
+    client.save(update_fields=['seances_restantes'])
+    client.refresh_from_db(fields=['seances_restantes'])
+
+
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -123,8 +137,10 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        found_user = User.objects.filter(email__iexact=email).first()
         user = authenticate(
-            username=request.data.get("email"),
+            username=found_user.username if found_user else email,
             password=request.data.get("password")
         )
         if not user:
@@ -498,6 +514,11 @@ class ProgrammeViewSet(viewsets.ModelViewSet):
         coach = getattr(self.request.user, 'coach_profile', None)
         if not coach:
             raise ValidationError({"error": "Profil coach introuvable. Action refusée."})
+        athlete = serializer.validated_data.get('athlete')
+        if not athlete:
+            raise ValidationError({"athlete": "Vous devez assigner ce programme à un athlète."})
+        if athlete.coach_id != coach.id:
+            raise ValidationError({"athlete": "Cet athlète n'appartient pas à votre portefeuille."})
 
         programme = serializer.save(coach=coach)
 
@@ -566,6 +587,13 @@ class SeanceViewSet(viewsets.ModelViewSet):
             data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
             self._inject_salle_from_alias(data)
             exercices_data = data.pop('exercices', [])
+            programme_id = data.get('programme')
+            has_planning = bool(data.get('jour_prevu') or data.get('heure_debut') or data.get('heure_fin'))
+            if programme_id and has_planning:
+                programme = get_object_or_404(Programme, id=programme_id)
+                athlete = getattr(programme, 'athlete', None)
+                if athlete and athlete.seances_restantes <= 0:
+                    return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
 
             serializer = self.get_serializer(data=data)
 
@@ -609,6 +637,8 @@ class SeanceViewSet(viewsets.ModelViewSet):
             headers = self.get_success_headers(serializer.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
+        except ValidationError as e:
+            return Response({"erreur": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             import traceback
             print(traceback.format_exc())
@@ -654,12 +684,30 @@ class SeanceViewSet(viewsets.ModelViewSet):
             ancienne_heure = instance.heure_debut
             ancienne_heure_fin = instance.heure_fin
             etait_completee = instance.est_completee
+            programme_athlete = instance.programme.athlete if instance.programme and instance.programme.athlete else None
+            devient_planifiee = (
+                programme_athlete
+                and not ancienne_date
+                and (data.get('jour_prevu') or data.get('heure_debut') or data.get('heure_fin'))
+            )
+            doit_creer_inscription_programme = (
+                programme_athlete
+                and not instance.inscriptions.filter(client=programme_athlete, statut__in=['CONFIRME', 'PRESENT', 'ABSENT']).exists()
+                and (data.get('jour_prevu') or data.get('heure_debut') or data.get('heure_fin'))
+            )
+
+            if devient_planifiee and programme_athlete.seances_restantes <= 0:
+                return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
 
             serializer = self.get_serializer(instance, data=data, partial=True)
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
             instance = serializer.save()
+
+            if doit_creer_inscription_programme:
+                Inscription.objects.create(seance=instance, client=programme_athlete, statut='CONFIRME')
+                _consume_seance_credit(programme_athlete)
 
             if exercices_data is not None:
                 SeanceExercice.objects.filter(seance=instance).delete()
@@ -1065,6 +1113,9 @@ def athlete_reserver_seance(request, seance_id):
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
     capacite = seance.capacite_max if seance.capacite_max else 1
 
+    if athlete.seances_restantes <= 0:
+        return Response({"erreur": "Quota de séances atteint."}, status=status.HTTP_400_BAD_REQUEST)
+
     if inscrits_confirmes < capacite:
         statut_final = 'CONFIRME'
         message_succes = "Inscription confirmée avec succès !"
@@ -1077,6 +1128,8 @@ def athlete_reserver_seance(request, seance_id):
         client=athlete,
         statut=statut_final
     )
+    if statut_final == 'CONFIRME':
+        _consume_seance_credit(athlete)
 
     jour_str = seance.jour_prevu.strftime('%d/%m/%Y') if seance.jour_prevu else 'date à définir'
 
@@ -1128,6 +1181,9 @@ def coach_inscrire_client(request, seance_id):
 
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
     capacite = seance.capacite_max if seance.capacite_max else 1
+    if client.seances_restantes <= 0:
+        return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
+
     statut_final = 'CONFIRME' if inscrits_confirmes < capacite else 'ATTENTE'
 
     inscription = Inscription.objects.create(
@@ -1135,6 +1191,8 @@ def coach_inscrire_client(request, seance_id):
         client=client,
         statut=statut_final
     )
+    if statut_final == 'CONFIRME':
+        _consume_seance_credit(client)
 
     jour_str = seance.jour_prevu.strftime('%d/%m/%Y') if seance.jour_prevu else 'date à définir'
     heure_str = seance.heure_debut.strftime('%H:%M') if seance.heure_debut else ''
@@ -1176,12 +1234,14 @@ def athlete_annuler_reservation(request, inscription_id):
     inscription.delete()
 
     if statut_avant_annulation == 'CONFIRME':
+        _restore_seance_credit(athlete)
         premier_en_attente = Inscription.objects.select_for_update().filter(
             seance=seance,
             statut='ATTENTE'
         ).order_by('id').first()
 
         if premier_en_attente:
+            _consume_seance_credit(premier_en_attente.client)
             premier_en_attente.statut = 'CONFIRME'
             premier_en_attente.save()
 
@@ -1397,6 +1457,9 @@ class CoachCalendarView(APIView):
                 "completed": s.est_completee,
                 "est_completee": s.est_completee,
                 "capacite_max": s.capacite_max,
+                "salle": s.salle_id,
+                "salle_id": s.salle_id,
+                "salle_nom": s.salle.nom if s.salle else "",
                 "nombre_inscrits": vrai_nb_inscrits,
                 "type": "collective" if s.est_collective else "individuelle",
                 "participants": participants_data
@@ -1455,6 +1518,10 @@ class PerformanceCreateView(APIView):
 
         seance_id = request.data.get('seance_id')
         exercices_data = request.data.get('exercices', [])
+        if not exercices_data and request.data.get('seance_exercice'):
+            exercices_data = [request.data]
+            seance_exercice = get_object_or_404(SeanceExercice, id=request.data.get('seance_exercice'))
+            seance_id = seance_exercice.seance_id
 
         if not seance_id:
               return Response({"erreur": "seance_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1467,14 +1534,18 @@ class PerformanceCreateView(APIView):
 
         for idx, item in enumerate(exercices_data):
             # Accept multiple possible frontend key names for robustness
+            seance_exercice_id = item.get('seance_exercice')
             exercice_id = item.get('exercice_id') or item.get('exerciceId') or item.get('id')
             series_realisees = item.get('series_realisees') if item.get('series_realisees') is not None else item.get('series')
             reps_realisees = item.get('reps_realisees') if item.get('reps_realisees') is not None else item.get('reps')
             poids_utilise_val = item.get('poids_moyen') if item.get('poids_moyen') is not None else item.get('poids')
-            if not exercice_id:
+            if not (seance_exercice_id or exercice_id):
                 skipped.append({'index': idx, 'reason': 'missing_exercice_id', 'item': item})
                 continue
-            seance_exercice = SeanceExercice.objects.filter(seance=seance, exercice_id=exercice_id).first()
+            if seance_exercice_id:
+                seance_exercice = SeanceExercice.objects.filter(seance=seance, id=seance_exercice_id).first()
+            else:
+                seance_exercice = SeanceExercice.objects.filter(seance=seance, exercice_id=exercice_id).first()
             if not seance_exercice:
                 skipped.append({'index': idx, 'exercice_id': exercice_id, 'reason': 'not_in_seance'})
                 continue
@@ -1557,6 +1628,10 @@ def update_inscription_status(request, inscription_id):
         return Response({"error": "Action non autorisée."}, status=status.HTTP_403_FORBIDDEN)
     ancien_statut = ins.statut
     nouveau_statut = request.data.get('statut')
+    if ancien_statut == 'ATTENTE' and nouveau_statut == 'CONFIRME':
+        _consume_seance_credit(ins.client)
+    elif ancien_statut == 'CONFIRME' and nouveau_statut in ['ATTENTE', 'ANNULE']:
+        _restore_seance_credit(ins.client)
     Inscription.objects.filter(id=inscription_id).update(statut=nouveau_statut)
     ins.refresh_from_db()
 
@@ -1581,6 +1656,8 @@ def remove_participant(request, inscription_id):
     client_name = f"{ins.client.prenom} {ins.client.nom}"
     seance = ins.seance
     seance_titre = ins.seance.titre
+    if ins.statut == 'CONFIRME':
+        _restore_seance_credit(ins.client)
     ins.delete()
 
     Notification.objects.create(

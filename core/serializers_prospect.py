@@ -5,13 +5,17 @@ class PublicCoachSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     nom = serializers.CharField()
     prenom = serializers.CharField(allow_blank=True)
+    first_name = serializers.CharField(allow_blank=True)
+    last_name = serializers.CharField(allow_blank=True)
     full_name = serializers.CharField()
+    email = serializers.EmailField(allow_blank=True)
     ville = serializers.CharField(allow_blank=True)
     specialites = serializers.ListField(child=serializers.CharField(), default=list)
     note = serializers.FloatField()
     avis = serializers.IntegerField()
     tarifs = serializers.DictField()
     programmes_gratuits = serializers.ListField(child=serializers.DictField(), default=list)
+    salles = serializers.ListField(child=serializers.DictField(), default=list)
     image = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
