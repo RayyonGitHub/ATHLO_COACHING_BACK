@@ -12,7 +12,7 @@ from core.views_responsable import ResponsableDashboardStatsView, ResponsablePla
 # core/urls.py
 # Ajoutez AthleteMyPlansView (ou le nom exact de votre vue)
 from core.views_nutrition import RecetteViewSet, PlanNutritionnelViewSet
-from core.views_stripe import stripe_webhook, CreatePlatformSubscriptionView, CreateStripeConnectAccountView, CheckStripeConnectStatusView, stripe_connect_relay
+from core.views_stripe import stripe_webhook, CreatePlatformSubscriptionView, CreateStripeConnectAccountView, CheckStripeConnectStatusView, stripe_connect_relay, CreateAthleteTopUpPaymentIntentView, ConfirmAthleteTopUpPaymentView
 from core.views_admin import admin_salle_list_create, admin_salle_delete
 from core.views_admin import admin_prospect_list, admin_delete_prospect, admin_finance_list, admin_exercice_list_create, admin_exercice_detail, admin_category_list_create, admin_category_delete, admin_me_view, admin_change_my_password, admin_responsable_list_create, admin_responsable_delete
 from core.views_integrations import (
@@ -134,6 +134,8 @@ urlpatterns = [
     # Dashboard Athlète
     path('api/athlete/dashboard-stats/', AthleteDashboardView.as_view(), name='athlete-dashboard-stats'),
     path('api/athlete/stats/', AthleteStatsView.as_view(), name='athlete-stats'),
+    path('api/athlete/topup/create-intent/', CreateAthleteTopUpPaymentIntentView.as_view(), name='athlete-topup-create-intent'),
+    path('api/athlete/topup/confirm/', ConfirmAthleteTopUpPaymentView.as_view(), name='athlete-topup-confirm'),
     path('api/seances/<int:seance_id>/ratee/', MarquerSeanceRateeView.as_view(), name='seance-ratee'),
 
     # Tracking de Performance

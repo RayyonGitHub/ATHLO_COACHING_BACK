@@ -30,7 +30,7 @@ from .models import (
     Client, Coach, Exercice, Programme, Seance,
     SeanceExercice, Performance, Indisponibilite,
     Inscription, Notification, NotificationAthlete, Salle, Avis,
-    ClientInvitation, Devis, Commande, LigneCommande, Produit
+    ClientInvitation, Devis, Commande, LigneCommande, Produit, ContratAthlete
 )
 from .serializers import (
     ClientSerializer, CoachSerializer, ExerciceSerializer,
@@ -108,6 +108,38 @@ def _consume_seance_credit(client):
 
 
 def _restore_seance_credit(client):
+    client.seances_restantes = F('seances_restantes') + 1
+    client.save(update_fields=['seances_restantes'])
+    client.refresh_from_db(fields=['seances_restantes'])
+
+
+def _consume_seance_credit(client):
+    if client.abonnement_valide:
+        return
+    active_contract = client.contrats.select_for_update().filter(
+        statut='ACTIF',
+        type_contrat__in=['PACK', 'UNITE'],
+        seances_restantes__gt=0
+    ).order_by('date_debut', 'id').first()
+    if not active_contract:
+        raise ValidationError({"erreur": "Quota de seances atteint pour cet athlete."})
+    active_contract.seances_restantes = F('seances_restantes') - 1
+    active_contract.save(update_fields=['seances_restantes'])
+    active_contract.refresh_from_db(fields=['seances_restantes'])
+    if active_contract.seances_restantes <= 0:
+        active_contract.statut = 'EXPIRE'
+        active_contract.save(update_fields=['statut'])
+    client.seances_restantes = F('seances_restantes') - 1
+    client.save(update_fields=['seances_restantes'])
+    client.refresh_from_db(fields=['seances_restantes'])
+
+
+def _restore_seance_credit(client):
+    active_contract = client.contrats.filter(type_contrat__in=['PACK', 'UNITE']).order_by('-date_debut', '-id').first()
+    if active_contract:
+        active_contract.seances_restantes = F('seances_restantes') + 1
+        active_contract.statut = 'ACTIF'
+        active_contract.save(update_fields=['seances_restantes', 'statut'])
     client.seances_restantes = F('seances_restantes') + 1
     client.save(update_fields=['seances_restantes'])
     client.refresh_from_db(fields=['seances_restantes'])
@@ -592,7 +624,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
             if programme_id and has_planning:
                 programme = get_object_or_404(Programme, id=programme_id)
                 athlete = getattr(programme, 'athlete', None)
-                if athlete and athlete.seances_restantes <= 0:
+                if athlete and not athlete.peut_reserver_seance:
                     return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
 
             serializer = self.get_serializer(data=data)
@@ -696,7 +728,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
                 and (data.get('jour_prevu') or data.get('heure_debut') or data.get('heure_fin'))
             )
 
-            if devient_planifiee and programme_athlete.seances_restantes <= 0:
+            if devient_planifiee and not programme_athlete.peut_reserver_seance:
                 return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
 
             serializer = self.get_serializer(instance, data=data, partial=True)
@@ -956,6 +988,7 @@ class AthleteDashboardView(APIView):
 
         return Response({
             "prenom": athlete.user.first_name,
+            "contrat": ClientSerializer(athlete).data.get("contrat"),
             "prochaine_seance": seance_data,
             "programme_actuel": programme_data,
             "stats_semaine": {
@@ -1094,6 +1127,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def athlete_reserver_seance(request, seance_id):
     if not hasattr(request.user, 'client_profile'):
         return Response(
@@ -1113,7 +1147,7 @@ def athlete_reserver_seance(request, seance_id):
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
     capacite = seance.capacite_max if seance.capacite_max else 1
 
-    if athlete.seances_restantes <= 0:
+    if not athlete.peut_reserver_seance:
         return Response({"erreur": "Quota de séances atteint."}, status=status.HTTP_400_BAD_REQUEST)
 
     if inscrits_confirmes < capacite:
@@ -1157,6 +1191,7 @@ def athlete_reserver_seance(request, seance_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def coach_inscrire_client(request, seance_id):
     if not hasattr(request.user, 'coach_profile'):
         return Response(
@@ -1181,7 +1216,7 @@ def coach_inscrire_client(request, seance_id):
 
     inscrits_confirmes = Inscription.objects.filter(seance=seance, statut='CONFIRME').count()
     capacite = seance.capacite_max if seance.capacite_max else 1
-    if client.seances_restantes <= 0:
+    if not client.peut_reserver_seance:
         return Response({"erreur": "Quota de séances atteint pour cet athlète."}, status=status.HTTP_400_BAD_REQUEST)
 
     statut_final = 'CONFIRME' if inscrits_confirmes < capacite else 'ATTENTE'
@@ -1348,6 +1383,10 @@ class CoachAnalyticsView(APIView):
         seven_days_ago = today - timedelta(days=6)
 
         total_athletes = Client.objects.filter(coach=coach).count()
+        contrats_actifs = ContratAthlete.objects.filter(coach=coach, statut='ACTIF').filter(
+            Q(type_contrat='ABONNEMENT', date_debut__lte=today, date_expiration__gte=today) |
+            Q(type_contrat__in=['PACK', 'UNITE'], seances_restantes__gt=0)
+        ).values('client_id').distinct().count()
 
         # --- LOGIQUE SÉANCES (Existante) ---
         seances_globales = Seance.objects.filter(
@@ -1387,6 +1426,7 @@ class CoachAnalyticsView(APIView):
 
         return Response({
             "total_athletes": total_athletes,
+            "contrats_actifs": contrats_actifs,
             "completion_rate": completion_rate,
             "total_volume": round(total_ca, 2), # On remplace le volume fictif par le CA réel
             "chart_data": chart_data,
