@@ -100,7 +100,6 @@ class Client(models.Model):
         abonnement = self.contrats.filter(
             statut='ACTIF',
             type_contrat='ABONNEMENT',
-            date_debut__lte=today,
             date_expiration__gte=today,
         ).order_by('-date_expiration', '-id').first()
         if abonnement:

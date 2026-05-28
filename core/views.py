@@ -37,7 +37,8 @@ from .serializers import (
     ProgrammeSerializer, SeanceSerializer, PerformanceSerializer,
     IndisponibiliteSerializer, NotificationSerializer,
     NotificationAthleteSerializer, SalleSerializer, AvisSerializer,
-    ProspectCoachListSerializer, ProspectCoachDetailSerializer, DevisSerializer, CommandeSerializer
+    ProspectCoachListSerializer, ProspectCoachDetailSerializer, DevisSerializer, CommandeSerializer,
+    normalize_offres_tarifs
 )
 
 
@@ -201,7 +202,7 @@ class ClientViewSet(viewsets.ModelViewSet):
         return Client.objects.none()
 
     def _get_default_offer_for_invitation(self, coach):
-        raw_offres = coach.offres_tarifs if isinstance(coach.offres_tarifs, dict) else {}
+        raw_offres = normalize_offres_tarifs(coach.offres_tarifs)
 
         try:
             abonnement = float(raw_offres.get('abonnement', 0) or 0)
@@ -260,7 +261,7 @@ class ClientViewSet(viewsets.ModelViewSet):
         # --- NOUVELLE LOGIQUE : CHOIX DU TARIF DEPUIS LE FRONTEND ---
         # ------------------------------------------------------------------
         selected_offer_type = self.request.data.get('offer_type')
-        raw_offres = coach_profile.offres_tarifs if isinstance(coach_profile.offres_tarifs, dict) else {}
+        raw_offres = normalize_offres_tarifs(coach_profile.offres_tarifs)
 
         OFFER_LABELS = {
             'abonnement': 'Abonnement mensuel',
@@ -273,6 +274,9 @@ class ClientViewSet(viewsets.ModelViewSet):
             offer_label = OFFER_LABELS[selected_offer_type]
             amount = float(raw_offres.get(selected_offer_type, 0) or 0)
         else:
+            offer_type, offer_label, amount = self._get_default_offer_for_invitation(coach_profile)
+
+        if amount <= 0:
             offer_type, offer_label, amount = self._get_default_offer_for_invitation(coach_profile)
 
         # Allow frontend to override the amount (custom pricing per client)

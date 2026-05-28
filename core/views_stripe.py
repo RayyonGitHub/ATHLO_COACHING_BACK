@@ -1,18 +1,21 @@
 import json
 import logging
 import stripe
-from datetime import timedelta
+import time
 from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction
-from django.db.models import F
+from django.db.utils import OperationalError
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .models import Commande, Facture, ClientInvitation, Notification, NotificationAthlete, Coach, Client, ContratAthlete
+from .models import Commande, Facture, ClientInvitation, Notification, NotificationAthlete, Coach, Client
+from .views_shop import mark_shop_order_paid
+from .contract_utils import grant_session_contract, grant_subscription_contract
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
@@ -100,42 +103,22 @@ def _grant_athlete_topup_from_intent(intent):
         )
         Facture.objects.get_or_create(commande=commande)
 
-        today = timezone.now().date()
         if offer_type == 'abonnement':
-            current_subscription = athlete.contrats.filter(
-                type_contrat='ABONNEMENT',
-                statut='ACTIF',
-                date_expiration__gte=today
-            ).order_by('-date_expiration').first()
-            start_date = current_subscription.date_expiration + timedelta(days=1) if current_subscription else today
-            expiration = start_date + timedelta(days=30)
-            ContratAthlete.objects.create(
-                client=athlete,
-                coach_id=coach_id or athlete.coach_id,
-                type_contrat='ABONNEMENT',
-                statut='ACTIF',
-                date_debut=start_date,
-                date_expiration=expiration,
-                seances_total=0,
-                seances_restantes=0,
-                stripe_payment_intent_id=payment_intent_id,
-                montant_ttc=amount,
+            grant_subscription_contract(
+                athlete,
+                athlete.coach,
+                amount,
+                payment_intent_id=payment_intent_id,
             )
         else:
-            ContratAthlete.objects.create(
-                client=athlete,
-                coach_id=coach_id or athlete.coach_id,
-                type_contrat=ATHLETE_TOPUP_TYPES[offer_type],
-                statut='ACTIF',
-                date_debut=today,
-                seances_total=credits,
-                seances_restantes=credits,
-                stripe_payment_intent_id=payment_intent_id,
-                montant_ttc=amount,
+            grant_session_contract(
+                athlete,
+                athlete.coach,
+                ATHLETE_TOPUP_TYPES[offer_type],
+                credits,
+                amount,
+                payment_intent_id=payment_intent_id,
             )
-            athlete.seances_restantes = F('seances_restantes') + credits
-            athlete.save(update_fields=['seances_restantes'])
-            athlete.refresh_from_db(fields=['seances_restantes'])
 
         if athlete.coach_id:
             Notification.objects.create(
@@ -150,6 +133,19 @@ def _grant_athlete_topup_from_intent(intent):
             message=f"Contrat active : {commande.offre_label}."
         )
         return commande
+
+
+def _grant_athlete_topup_from_intent_with_retry(intent, attempts=3):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return _grant_athlete_topup_from_intent(intent)
+        except OperationalError as error:
+            last_error = error
+            if "database is locked" not in str(error).lower() or attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+    raise last_error
 
 
 def stripe_connect_relay(request):
@@ -198,12 +194,11 @@ def stripe_webhook(request):
             try:
                 commande = Commande.objects.get(id=commande_id)
                 if commande.status != 'PAID':
-                    commande.status = 'PAID'
-                    commande.stripe_payment_intent_id = intent.get('id')
-                    commande.save()
-                    Facture.objects.get_or_create(commande=commande)
+                    mark_shop_order_paid(commande, intent.get('id'))
             except Commande.DoesNotExist:
                 logger.warning("stripe_webhook: commande introuvable", extra={"commande_id": commande_id})
+            except Exception as e:
+                logger.exception("stripe_webhook: confirmation boutique impossible", extra={"error": str(e)})
 
         elif checkout_type == 'invitation':
             token = metadata.get('invitation_token')
@@ -223,7 +218,12 @@ def stripe_webhook(request):
 
         elif checkout_type == 'athlete_topup':
             try:
-                _grant_athlete_topup_from_intent(intent)
+                _grant_athlete_topup_from_intent_with_retry(intent)
+            except OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    logger.warning("stripe_webhook: database locked, Stripe doit retenter", extra={"error": str(e)})
+                    return HttpResponse(status=500)
+                logger.exception("stripe_webhook: athlete_topup impossible", extra={"error": str(e)})
             except Exception as e:
                 logger.exception("stripe_webhook: athlete_topup impossible", extra={"error": str(e)})
 
@@ -340,6 +340,17 @@ class CreateAthleteTopUpPaymentIntentView(APIView):
         if amount <= 0:
             return Response({"message": "Prix de l'offre invalide."}, status=400)
 
+        active_contract = athlete.contrat_actif
+        if active_contract:
+            if active_contract.type_contrat == 'ABONNEMENT' and offer_type != 'abonnement':
+                return Response({
+                    "message": f"Votre abonnement est actif jusqu'au {active_contract.date_expiration.strftime('%d/%m/%Y')}. Vous pourrez acheter des seances apres cette date."
+                }, status=400)
+            if active_contract.type_contrat in ['PACK', 'UNITE'] and offer_type == 'abonnement':
+                return Response({
+                    "message": "Vous avez deja des seances actives. Vous pourrez passer a l'abonnement quand elles seront terminees."
+                }, status=400)
+
         try:
             fee_amount = int((amount * 100) * 0.10) if coach.platform_plan == 'free' else 0
             intent = stripe.PaymentIntent.create(
@@ -390,7 +401,12 @@ class ConfirmAthleteTopUpPaymentView(APIView):
         if metadata.get('checkout_type') != 'athlete_topup' or str(metadata.get('client_id')) != str(athlete.id):
             return Response({"message": "Paiement non autorise."}, status=403)
 
-        commande = _grant_athlete_topup_from_intent(intent)
+        try:
+            commande = _grant_athlete_topup_from_intent_with_retry(intent)
+        except ValidationError as err:
+            detail = getattr(err, 'detail', None)
+            message = detail.get('message') if isinstance(detail, dict) else "Changement de contrat impossible."
+            return Response({"message": message}, status=400)
         athlete.refresh_from_db(fields=['seances_restantes'])
         contrat = athlete.contrat_actif
         return Response({

@@ -1,7 +1,6 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from datetime import timedelta
-from django.db.models import Avg, F, Q
+from django.db.models import Avg, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.mail import send_mail
@@ -17,7 +16,7 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 import stripe
 from django.conf import settings
-from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification, ContratAthlete
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
@@ -27,6 +26,7 @@ from .serializers_prospect import (
 )
 from .serializers import SalleSerializer, DevisSerializer
 from core.views import calcul_distance
+from .contract_utils import grant_session_contract, grant_subscription_contract
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 CHECKOUT_SIGNER_SALT = "athlo-prospect-checkout-v1"
@@ -56,43 +56,22 @@ def _normalize_offres(raw_offres):
 
 
 def _grant_contract_for_offer(client, coach, offer_type, amount):
-    today = timezone.now().date()
     offer_type = offer_type or 'seance'
 
     if offer_type == 'abonnement':
-        current_subscription = client.contrats.filter(
-            type_contrat='ABONNEMENT',
-            statut='ACTIF',
-            date_expiration__gte=today
-        ).order_by('-date_expiration').first()
-        start_date = current_subscription.date_expiration + timedelta(days=1) if current_subscription else today
-        ContratAthlete.objects.create(
-            client=client,
-            coach=coach,
-            type_contrat='ABONNEMENT',
-            statut='ACTIF',
-            date_debut=start_date,
-            date_expiration=start_date + timedelta(days=30),
-            montant_ttc=amount or 0,
-        )
+        grant_subscription_contract(client, coach, amount)
         return
 
     credits_by_offer = {'seance': 1, 'pack': 10, 'devis': 1}
     credits = credits_by_offer.get(offer_type, 1)
     contrat_type = 'PACK' if offer_type == 'pack' else 'UNITE'
-    ContratAthlete.objects.create(
+    grant_session_contract(
         client=client,
         coach=coach,
-        type_contrat=contrat_type,
-        statut='ACTIF',
-        date_debut=today,
-        seances_total=credits,
-        seances_restantes=credits,
-        montant_ttc=amount or 0,
+        contrat_type=contrat_type,
+        credits=credits,
+        amount=amount,
     )
-    client.seances_restantes = F('seances_restantes') + credits
-    client.save(update_fields=['seances_restantes'])
-    client.refresh_from_db(fields=['seances_restantes'])
 
 
 def _get_specialites(coach):
