@@ -20,11 +20,11 @@ from django.utils.crypto import get_random_string
 @permission_classes([AllowAny])
 def admin_login_view(request):
     try:
-        email = request.data.get('email')
+        email = (request.data.get('email') or '').strip().lower()
         password = request.data.get('password')
         if not email or not password:
             return Response({'message': 'Email et mot de passe requis'}, status=400)
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
         if not user or not user.check_password(password):
             return Response({'message': 'Identifiants incorrects'}, status=401)
         if not user.is_staff and not user.is_superuser:

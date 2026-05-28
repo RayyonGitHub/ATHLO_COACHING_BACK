@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models.signals import post_save
+from django.db.models import F
 from django.dispatch import receiver
 from django.core.validators import FileExtensionValidator, MinValueValidator
 import uuid
@@ -381,6 +382,10 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
     athlete = getattr(instance.programme, 'athlete', None)
     if not athlete:
         return
+    if not (instance.jour_prevu and instance.heure_debut):
+        return
+    if athlete.seances_restantes <= 0:
+        raise ValidationError("Quota de séances atteint pour cet athlète.")
         
     inscription, nouvelle = Inscription.objects.get_or_create(
         seance=instance,
@@ -388,6 +393,8 @@ def inscrire_athlete_du_programme(sender, instance, created, **kwargs):
         defaults={'statut': 'CONFIRME'}
     )
     if nouvelle:
+        athlete.seances_restantes = F('seances_restantes') - 1
+        athlete.save(update_fields=['seances_restantes'])
         NotificationAthlete.objects.create(
             client=athlete,
             message=f"Tu as été inscrit(e) à la séance : {instance.titre}",
