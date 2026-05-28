@@ -786,7 +786,7 @@ class SeanceViewSet(viewsets.ModelViewSet):
         perfs = Performance.objects.filter(
             client=athlete,
             seance_exercice__seance=seance
-        ).select_related('seance_exercice__exercice')
+        ).select_related('seance_exercice__exercice').order_by('seance_exercice__ordre', 'id')
 
         resultats = []
         total_volume = 0
@@ -800,10 +800,13 @@ class SeanceViewSet(viewsets.ModelViewSet):
             total_volume += vol_exo
 
             resultats.append({
+                "id": p.id,
+                "exercice_id": p.seance_exercice.exercice_id,
                 "exercice": p.seance_exercice.exercice.nom,
+                "muscle": p.seance_exercice.exercice.muscle_principal or p.seance_exercice.exercice.categorie or "Général",
                 "series": p.series_realisees,
                 "reps": p.reps_realisees,
-                "poids": p.poids_utilise,
+                "poids": float(p.poids_utilise or 0),
                 "volume_exercice": int(vol_exo)
             })
 
@@ -981,7 +984,10 @@ class AthleteStatsView(APIView):
                 return Response({"error": "Profil introuvable"}, status=400)
 
             athlete_profile = request.user.client_profile
-            perf_qs = Performance.objects.filter(client=athlete_profile)
+            perf_qs = Performance.objects.filter(client=athlete_profile).select_related(
+                'seance_exercice__seance',
+                'seance_exercice__exercice'
+            )
 
             # Count total sessions the same way as the dashboard (est_completee=True)
             coach_associe = athlete_profile.coach
@@ -993,67 +999,61 @@ class AthleteStatsView(APIView):
                 est_completee=True
             ).distinct().count()
 
-            total_reps_dict = perf_qs.aggregate(Sum('reps_realisees'))
-            total_reps = total_reps_dict['reps_realisees__sum'] or 0
-
             total_volume_global = 0
+            total_reps = 0
+            muscle_totals = {}
+            session_totals = {}
+            personal_best = {}
             for perf in perf_qs:
                 poids_num = float(perf.poids_utilise or 0)
                 reps = perf.reps_realisees or 0
                 series = perf.series_realisees or 1
-                total_volume_global += poids_num * reps * series
+                volume = poids_num * reps * series
+                total_reps += reps * series
+                total_volume_global += volume
 
-            muscle_data = perf_qs.values(
-                name=F('seance_exercice__exercice__categorie')
-            ).annotate(value=Sum('reps_realisees')).order_by('-value')
+                exercice = perf.seance_exercice.exercice
+                muscle = exercice.muscle_principal or exercice.categorie or "Général"
+                muscle_totals[muscle] = muscle_totals.get(muscle, 0) + int(volume)
 
-            # Personal records: best weight per exercise (top 8 by weight)
-            pr_qs = perf_qs.values(
-                'seance_exercice__exercice__nom',
-                'seance_exercice__exercice__categorie',
-            ).annotate(
-                best_weight=Max('poids_utilise'),
-                best_reps=Max('reps_realisees'),
-            ).filter(best_weight__gt=0).order_by('-best_weight')[:8]
+                seance = perf.seance_exercice.seance
+                session = session_totals.setdefault(seance.id, {
+                    "titre": seance.titre or "Séance",
+                    "date": seance.jour_prevu.strftime('%d/%m/%Y') if seance.jour_prevu else perf.date_enregistrement.strftime('%d/%m/%Y'),
+                    "nb_exercices": set(),
+                    "volume_total": 0,
+                    "last_date": perf.date_enregistrement,
+                })
+                session["nb_exercices"].add(perf.seance_exercice_id)
+                session["volume_total"] += int(volume)
+                session["last_date"] = max(session["last_date"], perf.date_enregistrement)
 
-            personal_records = [
-                {
-                    "exercice": r['seance_exercice__exercice__nom'],
-                    "categorie": r['seance_exercice__exercice__categorie'],
-                    "best_weight": round(r['best_weight'], 1),
-                    "best_reps": r['best_reps'],
-                }
-                for r in pr_qs
+                current_pr = personal_best.get(exercice.id)
+                if poids_num > 0 and (not current_pr or poids_num > current_pr["best_weight"]):
+                    personal_best[exercice.id] = {
+                        "exercice": exercice.nom,
+                        "categorie": muscle,
+                        "best_weight": round(poids_num, 1),
+                        "best_reps": reps,
+                    }
+
+            muscle_data = [
+                {"name": name, "value": value}
+                for name, value in sorted(muscle_totals.items(), key=lambda item: item[1], reverse=True)
             ]
-
-            # Recent sessions: last 5 sessions with performance data
-            from django.db.models import Count
-            recent_raw = perf_qs.values(
-                'seance_exercice__seance__id',
-                'seance_exercice__seance__titre',
-                'seance_exercice__seance__jour_prevu',
-            ).annotate(
-                nb_exercices=Count('seance_exercice', distinct=True),
-                volume=Sum(F('poids_utilise') * F('reps_realisees') * F('series_realisees')),
-                last_date=Max('date_enregistrement'),
-            ).order_by('-last_date')[:5]
-
+            personal_records = sorted(personal_best.values(), key=lambda r: r["best_weight"], reverse=True)[:8]
             recent_sessions = [
-                {
-                    "titre": r['seance_exercice__seance__titre'] or "Séance",
-                    "date": r['seance_exercice__seance__jour_prevu'].strftime('%d/%m/%Y')
-                        if r['seance_exercice__seance__jour_prevu']
-                        else r['last_date'].strftime('%d/%m/%Y'),
-                    "nb_exercices": r['nb_exercices'],
-                    "volume_total": int(r['volume'] or 0),
-                }
-                for r in recent_raw
+                {**s, "nb_exercices": len(s["nb_exercices"])}
+                for s in sorted(session_totals.values(), key=lambda x: x["last_date"], reverse=True)[:5]
             ]
+            for session in recent_sessions:
+                session.pop("last_date", None)
 
             return Response({
                 "muscle_distribution": list(muscle_data),
                 "personal_records": personal_records,
                 "recent_sessions": recent_sessions,
+                "volume_history": list(reversed(recent_sessions)),
                 "summary": {
                     "total_sessions": total_sessions,
                     "total_reps": total_reps,
