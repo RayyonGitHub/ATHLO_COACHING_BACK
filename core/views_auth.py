@@ -32,6 +32,12 @@ def register_view(request):
         if not email or not password:
             return Response({'message': 'Email et mot de passe requis'}, status=400)
 
+        if not first_name:
+            return Response({'message': 'Le prénom est obligatoire.'}, status=400)
+
+        if not last_name:
+            return Response({'message': 'Le nom est obligatoire.'}, status=400)
+
         if User.objects.filter(email__iexact=email).exists():
             return Response({'message': 'Un compte avec cet email existe déjà'}, status=400)
 
@@ -97,7 +103,7 @@ def login_view(request):
         user = User.objects.filter(email__iexact=email).first()
 
         if not user or not user.check_password(password):
-            return Response({'message': 'Email ou mot de passe incorrect'}, status=401)
+            return Response({'message': 'Email ou mot de passe incorrect.'}, status=401)
 
         refresh = RefreshToken.for_user(user)
         role = 'prospect'
