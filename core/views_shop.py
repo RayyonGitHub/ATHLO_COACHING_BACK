@@ -214,7 +214,13 @@ class ShopOrderConfirmView(APIView):
             if intent.status != 'succeeded':
                 return Response({"error": "Paiement non confirmé"}, status=400)
             
-            commande_id = intent.metadata.get('commande_id')
+            # Sécurisation de la récupération des métadonnées Stripe
+            metadata = getattr(intent, 'metadata', {})
+            if hasattr(metadata, 'get'):
+                commande_id = metadata.get('commande_id')
+            else:
+                commande_id = metadata['commande_id'] if 'commande_id' in metadata else None
+                
             if not commande_id:
                 return Response({"error": "Commande introuvable dans les métadonnées"}, status=400)
             
@@ -222,12 +228,36 @@ class ShopOrderConfirmView(APIView):
             if commande.client_id != request.user.client_profile.id:
                 return Response({"error": "Commande non autorisée"}, status=403)
             
-            if commande.status != 'PAID':
-                mark_shop_order_paid(commande, payment_intent_id)
-            
-            return Response({"success": True, "commande_id": commande.id})
+            # The webhook is the only process allowed to mark the order as paid.
+            # This endpoint only stores front-end data that Stripe does not know.
+            adresse_livraison = request.data.get('adresse_livraison')
+            if adresse_livraison and isinstance(adresse_livraison, dict):
+                nom = adresse_livraison.get('nom', '')
+                adresse = adresse_livraison.get('adresse', '')
+                cp = adresse_livraison.get('code_postal', '')
+                ville = adresse_livraison.get('ville', '')
+                tel = adresse_livraison.get('telephone', '')
+                
+                adresse_formattee = f"{nom}\n{adresse}\n{cp} {ville}\nTél: {tel}"
+                commande.adresse_livraison = adresse_formattee
+                commande.save(update_fields=['adresse_livraison'])
+
+            commande.refresh_from_db(fields=['status'])
+            return Response({
+                "success": True,
+                "commande_id": commande.id,
+                "status": commande.status,
+                "message": "Adresse enregistrée. La validation de paiement est traitée par le webhook Stripe."
+            })
         
         except Commande.DoesNotExist:
             return Response({"error": "Commande introuvable"}, status=404)
         except Exception as e:
-            return Response({"error": str(e)}, status=400)
+            import traceback
+            traceback.print_exc()  # Cela va afficher l'erreur exacte et la ligne dans ton terminal Django
+            
+            error_msg = str(e)
+            if isinstance(e, KeyError):
+                error_msg = f"Clé manquante : {str(e)}"
+                
+            return Response({"error": error_msg, "type": e.__class__.__name__}, status=400)

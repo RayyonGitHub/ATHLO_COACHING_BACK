@@ -82,6 +82,9 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            'timeout': 20,  # Dit à SQLite d'attendre jusqu'à 20 secondes si la base est verrouillée
+        }
     }
 }
 
