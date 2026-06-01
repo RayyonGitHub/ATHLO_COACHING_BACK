@@ -3,7 +3,64 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from django.core.files.base import ContentFile
+from decimal import Decimal, ROUND_HALF_UP
 import io
+
+
+VAT_MULTIPLIER = Decimal('1.20')
+CENT = Decimal('0.01')
+
+
+def _money(value):
+    return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _split_ttc(total_ttc):
+    total_ttc = _money(total_ttc)
+    total_ht = (total_ttc / VAT_MULTIPLIER).quantize(CENT, rounding=ROUND_HALF_UP)
+    tva = _money(total_ttc - total_ht)
+    return total_ht, tva, total_ttc
+
+
+def _format_eur(value):
+    return f"{_money(value):.2f} €"
+
+
+def _build_invoice_lines(commande, styles):
+    lignes = list(commande.lignes.select_related('produit'))
+    if not lignes:
+        montant_ht, tva, montant_ttc = _split_ttc(commande.montant_ttc)
+        return [[
+            Paragraph(commande.offre_label or "Prestation", styles['Normal']),
+            _format_eur(montant_ht),
+            _format_eur(tva),
+            _format_eur(montant_ttc),
+        ]]
+
+    rows = []
+    for ligne in lignes:
+        total_ligne_ttc = _money(ligne.prix_unitaire) * ligne.quantite
+        montant_ht, tva, montant_ttc = _split_ttc(total_ligne_ttc)
+        designation = f"{ligne.quantite} x {ligne.produit.nom}"
+        rows.append([
+            Paragraph(designation, styles['Normal']),
+            _format_eur(montant_ht),
+            _format_eur(tva),
+            _format_eur(montant_ttc),
+        ])
+
+    frais_livraison = _money(getattr(commande, 'frais_livraison', 0))
+    if frais_livraison > 0:
+        montant_ht, tva, montant_ttc = _split_ttc(frais_livraison)
+        rows.append([
+            Paragraph("Frais de livraison", styles['Normal']),
+            _format_eur(montant_ht),
+            _format_eur(tva),
+            _format_eur(montant_ttc),
+        ])
+
+    return rows
+
 
 def generate_invoice_pdf(facture):
     buffer = io.BytesIO()
@@ -68,14 +125,13 @@ def generate_invoice_pdf(facture):
     elements.append(Spacer(1, 40))
     
     # --- 3. TABLEAU DES PRESTATIONS ---
-    montant_ht = float(facture.commande.montant_ht)
-    montant_ttc = float(facture.commande.montant_ttc)
-    tva = round(montant_ttc - montant_ht, 2)
+    montant_ttc = _money(facture.commande.montant_ttc)
+    montant_ht, tva, montant_ttc = _split_ttc(montant_ttc)
     
     table_data = [
         ["Désignation", "Montant HT", "TVA (20%)", "Total TTC"],
-        [facture.commande.offre_label, f"{montant_ht:.2f} €", f"{tva:.2f} €", f"{montant_ttc:.2f} €"]
     ]
+    table_data.extend(_build_invoice_lines(facture.commande, styles))
     
     # Les largeurs font un total d'environ 510 (largeur dispo sur A4 avec marges)
     t = Table(table_data, colWidths=[210, 100, 100, 100])
@@ -99,9 +155,9 @@ def generate_invoice_pdf(facture):
     
     # --- 4. BLOC DES TOTAUX ---
     totals_data = [
-        ["Total HT :", f"{montant_ht:.2f} €"],
-        ["TVA (20%) :", f"{tva:.2f} €"],
-        ["TOTAL TTC :", f"{montant_ttc:.2f} €"]
+        ["Total HT :", _format_eur(montant_ht)],
+        ["TVA (20%) :", _format_eur(tva)],
+        ["TOTAL TTC :", _format_eur(montant_ttc)]
     ]
     totals_table = Table(totals_data, colWidths=[100, 100])
     totals_table.setStyle(TableStyle([

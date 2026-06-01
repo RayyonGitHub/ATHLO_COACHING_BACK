@@ -628,6 +628,7 @@ class Commande(models.Model):
     montant_ht = models.FloatField(default=0.0)
     tva_taux = models.FloatField(default=20.0)
     montant_ttc = models.FloatField(default=0.0)
+    frais_livraison = models.FloatField(default=0.0)
     
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
     date_commande = models.DateTimeField(auto_now_add=True)

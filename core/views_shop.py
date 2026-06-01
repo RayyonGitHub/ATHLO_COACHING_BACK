@@ -142,6 +142,7 @@ class CreateShopPaymentIntentView(APIView):
             return Response({"error": "Un produit du panier est introuvable ou indisponible."}, status=400)
         if any(produit.coach_id != premier_produit.coach_id for produit in produits.values()):
             return Response({"error": "Un panier ne peut contenir que des produits du même coach."}, status=400)
+        has_physical_product = any(produit.type_produit == 'PHYSIQUE' for produit in produits.values())
 
         # 1. On crée une commande en statut PENDING en attachant le coach
         commande = Commande.objects.create(
@@ -168,7 +169,9 @@ class CreateShopPaymentIntentView(APIView):
             )
 
         # Sauvegarde des montants finaux
-        total_amount += SHIPPING_FEE
+        shipping_fee = SHIPPING_FEE if has_physical_product else Decimal('0.00')
+        total_amount += shipping_fee
+        commande.frais_livraison = float(shipping_fee)
         commande.montant_ttc = float(total_amount)
         commande.montant_ht = round(float(total_amount) / 1.2, 2)
         commande.save()

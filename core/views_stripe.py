@@ -148,6 +148,19 @@ def _grant_athlete_topup_from_intent_with_retry(intent, attempts=3):
     raise last_error
 
 
+def _mark_shop_order_paid_with_retry(commande, payment_intent_id, attempts=3):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return mark_shop_order_paid(commande, payment_intent_id)
+        except OperationalError as error:
+            last_error = error
+            if "database is locked" not in str(error).lower() or attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+    raise last_error
+
+
 def stripe_connect_relay(request):
     """Relay view: redirects to mobile deep link or web frontend after Stripe flows."""
     platform = request.GET.get('platform', 'web')
@@ -194,9 +207,14 @@ def stripe_webhook(request):
             try:
                 commande = Commande.objects.get(id=commande_id)
                 if commande.status != 'PAID':
-                    mark_shop_order_paid(commande, intent.get('id'))
+                    _mark_shop_order_paid_with_retry(commande, intent.get('id'))
             except Commande.DoesNotExist:
                 logger.warning("stripe_webhook: commande introuvable", extra={"commande_id": commande_id})
+            except OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    logger.warning("stripe_webhook: database locked sur commande boutique, Stripe doit retenter", extra={"commande_id": commande_id, "error": str(e)})
+                    return HttpResponse(status=500)
+                logger.exception("stripe_webhook: confirmation boutique impossible", extra={"error": str(e)})
             except Exception as e:
                 logger.exception("stripe_webhook: confirmation boutique impossible", extra={"error": str(e)})
 

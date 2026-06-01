@@ -544,7 +544,7 @@ class CommandeSerializer(serializers.ModelSerializer):
         model = Commande
         fields = [
             'id', 'order_number', 'offre_label', 'offre_type', 
-            'montant_ttc', 'status', 'date_commande', 'facture'
+            'montant_ttc', 'frais_livraison', 'status', 'date_commande', 'facture'
         ]
 
 
