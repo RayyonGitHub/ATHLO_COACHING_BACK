@@ -1,0 +1,24 @@
+name: Deploy Back
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS back
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ vars.SSH_HOST_BACK }}
+          username: ${{ vars.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /app/back
+            git pull https://RayyOnGitHub:${{ secrets.GIT_TOKEN }}@github.com/uha-fr/endyearproject_2026_back.git
+            source venv/bin/activate
+            pip install -r requirements.txt
+            python manage.py migrate
+            python manage.py collectstatic --noinput
+            sudo systemctl restart gunicorn
