@@ -7,14 +7,14 @@ from pathlib import Path
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
-load_dotenv()
+# 1. On définit BASE_DIR EN PREMIER
+BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 2. On force la lecture du .env avec son chemin absolu exact
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 def env_bool(name, default=False):
     return os.getenv(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
