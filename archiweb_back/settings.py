@@ -115,6 +115,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:8081",
     "http://127.0.0.1:8081",
+    "http://178.170.25.12",
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
@@ -169,7 +170,7 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # --- FRONTEND URL (RESET PASSWORD) ---
-FRONTEND_URL = 'http://localhost:5173'
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://178.170.25.12')
 
 # --- EXPO DEV URL (pour tester les deep links avec Expo Go) ---
 # Format : exp://IP:8081  — mettre à None en production
