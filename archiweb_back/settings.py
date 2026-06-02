@@ -110,7 +110,6 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # --- CONFIGURATION CORS ---
-# --- CONFIGURATION CORS ---
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -118,12 +117,15 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8081",
 ]
 
-# Ajoute l'URL sécurisée provenant du fichier .env de production
-env_cors = os.getenv('CORS_ALLOWED_ORIGINS')
+# Ajoute l'URL du .env en nettoyant les espaces et sauts de ligne invisibles
+env_cors = os.getenv('CORS_ALLOWED_ORIGINS', '')
 if env_cors:
-    CORS_ALLOWED_ORIGINS.append(env_cors)
+    # Sépare par des virgules (si plusieurs IPs) et nettoie chaque URL (.strip())
+    extra_origins = [origin.strip() for origin in env_cors.split(',') if origin.strip()]
+    CORS_ALLOWED_ORIGINS.extend(extra_origins)
 
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'cache-control',
     'x-requested-with',
