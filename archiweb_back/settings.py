@@ -110,13 +110,19 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # --- CONFIGURATION CORS ---
+# --- CONFIGURATION CORS ---
 CORS_ALLOWED_ORIGINS = [
-     "http://localhost:5173",
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8081",
     "http://127.0.0.1:8081",
-    "http://178.170.25.12",
 ]
+
+# Ajoute l'URL sécurisée provenant du fichier .env de production
+env_cors = os.getenv('CORS_ALLOWED_ORIGINS')
+if env_cors:
+    CORS_ALLOWED_ORIGINS.append(env_cors)
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'cache-control',
@@ -170,7 +176,8 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # --- FRONTEND URL (RESET PASSWORD) ---
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://178.170.25.12')
+# Lit l'URL depuis le .env, ou utilise localhost par défaut
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
 # --- EXPO DEV URL (pour tester les deep links avec Expo Go) ---
 # Format : exp://IP:8081  — mettre à None en production
