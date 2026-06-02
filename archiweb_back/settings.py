@@ -11,19 +11,27 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 2. On force la lecture du .env avec son chemin absolu exact
-load_dotenv(os.path.join(BASE_DIR, '.env'))
+load_dotenv(BASE_DIR / '.env')
+
+
+def env_str(name, default=''):
+    return os.getenv(name, default).strip()
 
 def env_bool(name, default=False):
-    return os.getenv(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
+    return env_str(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
+
+
+def env_list(name):
+    return [value.strip() for value in env_str(name).split(',') if value.strip()]
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY')
+SECRET_KEY = env_str('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool('DJANGO_DEBUG', False)
 
-STRAVA_CLIENT_ID = os.getenv('STRAVA_CLIENT_ID')
-STRAVA_CLIENT_SECRET = os.getenv('STRAVA_CLIENT_SECRET')
+STRAVA_CLIENT_ID = env_str('STRAVA_CLIENT_ID')
+STRAVA_CLIENT_SECRET = env_str('STRAVA_CLIENT_SECRET')
 
 ALLOWED_HOSTS = ['*']
 
@@ -110,19 +118,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # --- CONFIGURATION CORS ---
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8081",
-    "http://127.0.0.1:8081",
-]
-
-# Ajoute l'URL du .env en nettoyant les espaces et sauts de ligne invisibles
-env_cors = os.getenv('CORS_ALLOWED_ORIGINS', '')
-if env_cors:
-    # Sépare par des virgules (si plusieurs IPs) et nettoie chaque URL (.strip())
-    extra_origins = [origin.strip() for origin in env_cors.split(',') if origin.strip()]
-    CORS_ALLOWED_ORIGINS.extend(extra_origins)
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -168,8 +164,8 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
+EMAIL_HOST_USER = env_str('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = env_str('EMAIL_HOST_PASSWORD')
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
@@ -178,23 +174,23 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # --- FRONTEND URL (RESET PASSWORD) ---
-# Lit l'URL depuis le .env, ou utilise localhost par défaut
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+# Lit l'URL depuis le .env du serveur.
+FRONTEND_URL = env_str('FRONTEND_URL')
 
 # --- EXPO DEV URL (pour tester les deep links avec Expo Go) ---
 # Format : exp://IP:8081  — mettre à None en production
-EXPO_DEV_URL = 'exp://192.168.137.1:8081'
+EXPO_DEV_URL = env_str('EXPO_DEV_URL')
 
 # --- GOOGLE CALENDAR ---
-GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
-GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
-GOOGLE_REDIRECT_URI = "http://localhost:5173/auth/google/callback"
+GOOGLE_CLIENT_ID = env_str('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = env_str('GOOGLE_CLIENT_SECRET')
+GOOGLE_REDIRECT_URI = env_str('GOOGLE_REDIRECT_URI')
 GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar"
 ]
 
 # --- STRIPE CONFIGURATION ---
-STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
-STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
+STRIPE_PUBLIC_KEY = env_str('STRIPE_PUBLIC_KEY')
+STRIPE_SECRET_KEY = env_str('STRIPE_SECRET_KEY')
+STRIPE_WEBHOOK_SECRET = env_str('STRIPE_WEBHOOK_SECRET')
 STRIPE_PREMIUM_PRICE_ID = 'price_1TXkjbC9OZTHr1sPOvQJsjwl'

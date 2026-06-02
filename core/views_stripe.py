@@ -177,7 +177,7 @@ def stripe_connect_relay(request):
         response['Location'] = target
         return response
 
-    frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+    frontend_url = settings.FRONTEND_URL
     return redirect(f"{frontend_url}/parametres?stripe_connect={status}")
 
 
@@ -305,7 +305,7 @@ class CreatePlatformSubscriptionView(APIView):
             coach.save()
 
         platform = request.data.get('platform', 'web')
-        front_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        front_url = settings.FRONTEND_URL
 
         if platform == 'mobile':
             backend_url = request.build_absolute_uri('/').rstrip('/')
@@ -466,7 +466,7 @@ class CreateStripeConnectAccountView(APIView):
 
     def post(self, request):
         coach = request.user.coach_profile
-        front_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        front_url = settings.FRONTEND_URL
         platform = request.data.get('platform', 'web')
 
         # Build relay URLs for mobile, direct URLs for web

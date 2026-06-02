@@ -15,7 +15,7 @@ def link_for_platform(platform: str, mobile_path: str, web_path: str) -> str:
         if expo_dev_url:
             return f"{expo_dev_url}/--/{mobile_path}"
         return f"athlo://{mobile_path}"
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
+    frontend_url = settings.FRONTEND_URL
     return f"{frontend_url}/{web_path}"
 
 
