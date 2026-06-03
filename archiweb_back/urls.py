@@ -144,6 +144,7 @@ urlpatterns = [
     # Super Admin - Étape 1
     path('api/admin/login/', views_admin.admin_login_view, name='admin-login'),
     path('api/admin/stats/', views_admin.admin_stats_view, name='admin-stats'),
+    path('api/admin/notifications/', views_admin.admin_notifications_view, name='admin-notifications'),
     path('api/admin/coachs/', views_admin.admin_coach_list, name='admin-coach-list'),
     path('api/admin/athletes/', views_admin.admin_athlete_list, name='admin-athlete-list'),
     path('api/admin/athletes/<int:pk>/', views_admin.admin_delete_athlete, name='admin-athlete-delete'),

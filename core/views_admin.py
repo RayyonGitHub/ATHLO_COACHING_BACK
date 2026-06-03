@@ -337,6 +337,71 @@ def admin_coach_list(request):
     data.sort(key=lambda x: x['revenus'], reverse=True)
     return Response(data)
 
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsSystemAdmin])
+def admin_notifications_view(request):
+    try:
+        limit = min(int(request.query_params.get('limit', 12)), 30)
+    except (TypeError, ValueError):
+        limit = 12
+
+    notifications = []
+
+    def add_notification(id_prefix, item_id, notif_type, title, message, date_creation):
+        if not date_creation:
+            return
+        notifications.append({
+            'id': f'{id_prefix}-{item_id}',
+            'type': notif_type,
+            'title': title,
+            'message': message,
+            'date_creation': date_creation,
+        })
+
+    for devis in Devis.objects.select_related('coach__user').order_by('-date_creation')[:8]:
+        coach_name = devis.coach.user.get_full_name() or devis.coach.user.email or devis.coach.user.username
+        prospect_name = f'{devis.prenom} {devis.nom}'.strip() or devis.email
+        add_notification(
+            'devis',
+            devis.id,
+            'DEVIS',
+            'Nouvelle demande de devis',
+            f'{prospect_name} a demandé une offre {devis.offre_type} auprès de {coach_name}.',
+            devis.date_creation,
+        )
+
+    for commande in Commande.objects.select_related('client__user', 'coach__user').order_by('-date_commande')[:8]:
+        client_name = f'{commande.client.prenom} {commande.client.nom}'.strip() or commande.client.email
+        add_notification(
+            'commande',
+            commande.id,
+            'PAIEMENT' if commande.status == 'PAID' else 'COMMANDE',
+            'Paiement validé' if commande.status == 'PAID' else 'Nouvelle commande',
+            f'{client_name} - {commande.offre_label or commande.offre_type or "Commande"} ({commande.montant_ttc:.2f} EUR).',
+            commande.date_commande,
+        )
+
+    for client in Client.objects.select_related('coach__user').order_by('-date_creation')[:8]:
+        coach_name = ''
+        if client.coach_id:
+            coach_name = client.coach.user.get_full_name() or client.coach.user.email or client.coach.user.username
+        add_notification(
+            'client',
+            client.id,
+            'ATHLETE',
+            'Nouvel athlète',
+            f'{client.prenom} {client.nom} a rejoint la plateforme' + (f' avec {coach_name}.' if coach_name else '.'),
+            client.date_creation,
+        )
+
+    notifications.sort(key=lambda item: item['date_creation'], reverse=True)
+    for notification in notifications:
+        notification['date_creation'] = notification['date_creation'].isoformat()
+
+    return Response(notifications[:limit])
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsSystemAdmin])
