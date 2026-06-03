@@ -7,7 +7,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from core import views
 from core.views import (
-    ClientViewSet, CoachMeView, AthleteMeView, ProspectMeView,
+    ClientViewSet, CoachMeView, CoachSallesDisponiblesView, AthleteMeView, ProspectMeView,
     ExerciceViewSet, ProgrammeViewSet, SeanceViewSet,
     AthleteDashboardView, AthleteStatsView,
     DemoStatsView, CoachAnalyticsView,
@@ -26,8 +26,8 @@ from core.views_admin import (
     admin_coach_list,
     admin_athlete_list,
     admin_stats_view,
+    admin_delete_athlete,
     admin_toggle_coach_status,
-    admin_delete_athlete
 )
 from core.views import export_coach_calendar, remove_participant, update_inscription_status
 from core.views_messages import (
@@ -80,6 +80,7 @@ urlpatterns = [
 
     # Profils utilisateur
     path('api/coach/me/', CoachMeView.as_view(), name='coach-me'),
+    path('api/coach/salles-disponibles/', CoachSallesDisponiblesView.as_view(), name='coach-salles-disponibles'),
     path('api/athlete/me/', AthleteMeView.as_view(), name='athlete-me'),
     path('api/prospect/me/', ProspectMeView.as_view(), name='prospect-me'),
 

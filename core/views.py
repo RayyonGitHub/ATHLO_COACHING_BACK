@@ -249,6 +249,18 @@ class ClientViewSet(viewsets.ModelViewSet):
         )
 
 
+class CoachSallesDisponiblesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        ville = (request.query_params.get('ville') or '').strip().lower()
+        qs = Salle.objects.all()
+        if ville:
+            qs = qs.filter(ville__icontains=ville)
+        data = [{"id": s.id, "nom": s.nom, "adresse": s.adresse, "ville": s.ville} for s in qs]
+        return Response(data, status=status.HTTP_200_OK)
+
+
 class CoachMeView(APIView):
     permission_classes = [IsAuthenticated]
 

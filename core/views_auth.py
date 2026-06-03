@@ -24,6 +24,16 @@ def register_view(request):
         full_name = request.data.get('fullName', '')
         role = request.data.get('role', 'prospect')
 
+        # Accepte first_name/last_name ou prenom/nom ou fullName
+        first_name = (request.data.get('first_name') or request.data.get('prenom') or '').strip()
+        last_name = (request.data.get('last_name') or request.data.get('nom') or '').strip()
+
+        # Fallback : découper fullName si les champs séparés sont absents
+        if not first_name and full_name:
+            name_parts = full_name.strip().split(' ', 1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else ''
+
         if not email or not password:
             return Response({'message': 'Email et mot de passe requis'}, status=400)
 
@@ -32,10 +42,6 @@ def register_view(request):
 
         if User.objects.filter(username=email).exists():
             return Response({'message': 'Un compte avec cet email existe déjà'}, status=400)
-
-        name_parts = full_name.strip().split(' ', 1)
-        first_name = name_parts[0] if len(name_parts) > 0 else ''
-        last_name = name_parts[1] if len(name_parts) > 1 else ''
 
         user = User.objects.create_user(
             username=email,
@@ -46,13 +52,25 @@ def register_view(request):
         )
 
         if role == 'coach':
-            Coach.objects.create(user=user)
+            Coach.objects.create(
+                user=user,
+                specialite=request.data.get('specialite', ''),
+                ville=request.data.get('ville', ''),
+                specialites_tags=request.data.get('specialites_tags', []),
+                offres_tarifs=request.data.get('offres_tarifs', {}),
+            )
+
+        refresh = RefreshToken.for_user(user)
 
         return Response({
             'message': 'Inscription réussie',
+            'token': str(refresh.access_token),
+            'refresh': str(refresh),
             'user': {
                 'id': user.id,
                 'email': user.email,
+                'first_name': first_name,
+                'last_name': last_name,
                 'name': full_name,
                 'role': role
             }
