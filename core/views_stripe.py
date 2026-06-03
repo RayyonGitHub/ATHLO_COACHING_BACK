@@ -165,6 +165,25 @@ def stripe_connect_relay(request):
     """Relay view: redirects to mobile deep link or web frontend after Stripe flows."""
     platform = request.GET.get('platform', 'web')
     status = request.GET.get('status', 'success')
+    account_id = request.GET.get('account_id', '').strip()
+
+    # Lien expiré : on régénère automatiquement un nouveau lien d'onboarding
+    if status == 'refresh' and account_id:
+        try:
+            backend_url = request.build_absolute_uri('/').rstrip('/')
+            new_return_url = f"{backend_url}/api/stripe/connect-relay/?platform={platform}&status=success"
+            new_refresh_url = f"{backend_url}/api/stripe/connect-relay/?platform={platform}&status=refresh&account_id={account_id}"
+            account_link = stripe.AccountLink.create(
+                account=account_id,
+                refresh_url=new_refresh_url,
+                return_url=new_return_url,
+                type="account_onboarding",
+            )
+            response = HttpResponse(status=302)
+            response['Location'] = account_link.url
+            return response
+        except Exception:
+            pass  # En cas d'erreur Stripe, on laisse tomber vers le fallback ci-dessous
 
     if platform == 'mobile':
         expo_dev_url = getattr(settings, 'EXPO_DEV_URL', None)
@@ -172,7 +191,6 @@ def stripe_connect_relay(request):
             target = f"{expo_dev_url}/--/(tabs)/coach/settings?stripe_connect={status}"
         else:
             target = f"athlo://(tabs)/coach/settings?stripe_connect={status}"
-        # Use raw HttpResponse to bypass Django's scheme whitelist (exp:// is safe here)
         response = HttpResponse(status=302)
         response['Location'] = target
         return response
@@ -473,7 +491,7 @@ class CreateStripeConnectAccountView(APIView):
         if platform == 'mobile':
             backend_url = request.build_absolute_uri('/').rstrip('/')
             return_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=success"
-            refresh_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=refresh"
+            refresh_url = f"{backend_url}/api/stripe/connect-relay/?platform=mobile&status=refresh&account_id={coach.stripe_account_id or ''}"
         else:
             return_url = f"{front_url}/parametres?stripe_connect=success"
             refresh_url = f"{front_url}/parametres?stripe_connect=refresh"

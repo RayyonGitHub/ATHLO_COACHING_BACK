@@ -45,7 +45,7 @@ from core.views_admin import (
     admin_athlete_list,
     admin_stats_view,
     admin_delete_athlete,
-    admin_toggle_coach_status,
+    admin_toggle_user_status,
 )
 from core.views import export_coach_calendar, remove_participant, update_inscription_status
 from core import views_admin
