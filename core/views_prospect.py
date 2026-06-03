@@ -1,9 +1,10 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from django.db.models import Avg
+from django.db.models import Avg, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.mail import send_mail
+from .email_utils import link_for_platform, send_html_email
 from django.conf import settings
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
@@ -13,8 +14,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
-
-from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation
+import stripe
+from django.conf import settings
+from .models import Coach, Client, Programme, Salle, Devis, ClientInvitation, Commande, Facture, Notification
 from .serializers_prospect import (
     PublicCoachSerializer,
     ProspectActivateAthleteSerializer,
@@ -24,8 +26,9 @@ from .serializers_prospect import (
 )
 from .serializers import SalleSerializer, DevisSerializer
 from core.views import calcul_distance
+from .contract_utils import grant_session_contract, grant_subscription_contract
 
-
+stripe.api_key = settings.STRIPE_SECRET_KEY
 CHECKOUT_SIGNER_SALT = "athlo-prospect-checkout-v1"
 CHECKOUT_TOKEN_MAX_AGE = 60 * 60 * 3  # 3h
 
@@ -50,6 +53,25 @@ def _normalize_offres(raw_offres):
             normalized[key] = defaults[key]
 
     return normalized
+
+
+def _grant_contract_for_offer(client, coach, offer_type, amount):
+    offer_type = offer_type or 'seance'
+
+    if offer_type == 'abonnement':
+        grant_subscription_contract(client, coach, amount)
+        return
+
+    credits_by_offer = {'seance': 1, 'pack': 10, 'devis': 1}
+    credits = credits_by_offer.get(offer_type, 1)
+    contrat_type = 'PACK' if offer_type == 'pack' else 'UNITE'
+    grant_session_contract(
+        client=client,
+        coach=coach,
+        contrat_type=contrat_type,
+        credits=credits,
+        amount=amount,
+    )
 
 
 def _get_specialites(coach):
@@ -78,26 +100,40 @@ def _get_public_programmes(coach):
     return result
 
 
+def _get_salles(coach):
+    # Retourne les salles affiliées au coach. Si le coach a une ville définie,
+    # ne renvoyer que les salles de la même ville pour éviter de proposer
+    # des salles géographiquement incohérentes.
+    qs = coach.salles.all()
+    if coach.ville:
+        qs = qs.filter(ville__iexact=coach.ville)
+    return [{"id": s.id, "nom": s.nom, "ville": s.ville} for s in qs]
+
 def _serialize_public_coach(coach):
     offres = _normalize_offres(coach.offres_tarifs)
     moyenne_note = coach.avis.aggregate(avg=Avg('note'))['avg'] or 0
     avis_count = coach.avis.count()
 
-    prenom = coach.user.first_name or ""
-    nom = coach.user.last_name or coach.user.username or coach.user.email
-    full_name = f"{prenom} {nom}".strip()
+    first_name = (coach.user.first_name or "").strip()
+    last_name = (coach.user.last_name or "").strip()
+    email = coach.user.email or ""
+    full_name = f"{first_name} {last_name}".strip() or coach.user.get_full_name().strip() or coach.user.username or email
 
     payload = {
         "id": coach.id,
-        "nom": nom,
-        "prenom": prenom,
+        "nom": full_name,
+        "prenom": first_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "full_name": full_name,
+        "email": email,
         "ville": coach.ville or "",
         "specialites": _get_specialites(coach),
         "note": round(float(moyenne_note), 1) if moyenne_note else 0.0,
         "avis": avis_count,
         "tarifs": offres,
         "programmes_gratuits": _get_public_programmes(coach),
+        "salles": _get_salles(coach), # <-- NOUVEAU
         "image": None,
     }
 
@@ -153,12 +189,16 @@ class PublicCoachListView(APIView):
     def get(self, request):
         ville = (request.query_params.get('ville') or '').strip().lower()
         specialite = (request.query_params.get('specialite') or '').strip().lower()
+        salle_nom = (request.query_params.get('salle') or '').strip().lower() # <-- NOUVEAU FILTRE
         note_min = request.query_params.get('note_min')
         prix_max = request.query_params.get('prix_max')
         type_offre = (request.query_params.get('type_offre') or 'tous').strip().lower()
 
-        coaches = Coach.objects.select_related('user').prefetch_related('avis', 'programmes_crees').all()
-
+       # On exclut les coachs qui n'ont pas configuré leur compte Stripe Connect
+        # On filtre uniquement les coachs ayant COMPLÉTÉ l'onboarding Stripe
+        coaches = Coach.objects.filter(
+            stripe_onboarding_complete=True
+        ).select_related('user').prefetch_related('avis', 'programmes_crees', 'salles')
         results = []
         for coach in coaches:
             serialized = _serialize_public_coach(coach)
@@ -169,6 +209,12 @@ class PublicCoachListView(APIView):
             if specialite:
                 coach_specs = [s.lower() for s in serialized.get('specialites', [])]
                 if specialite not in coach_specs:
+                    continue
+                    
+            # --- FILTRAGE PAR SALLE ---
+            if salle_nom:
+                coach_salles = [s['nom'].lower() for s in serialized.get('salles', [])]
+                if not any(salle_nom in s for s in coach_salles):
                     continue
 
             if note_min:
@@ -199,16 +245,15 @@ class PublicCoachListView(APIView):
 
 class ProspectCheckoutPayView(APIView):
     permission_classes = [IsAuthenticated]
-
     OFFER_LABELS = {
         'seance': 'Séance unique',
         'pack': 'Pack 10 séances',
         'abonnement': 'Abonnement mensuel',
+        'devis': 'Devis personnalisé',
     }
 
     def post(self, request):
         user = request.user
-
         if hasattr(user, 'coach_profile'):
             return Response(
                 {"message": "Un coach ne peut pas utiliser ce tunnel prospect."},
@@ -218,52 +263,93 @@ class ProspectCheckoutPayView(APIView):
         coach_id = request.data.get('coach_id')
         offer_type = (request.data.get('offer_type') or '').strip().lower()
 
-        if offer_type not in ['seance', 'pack', 'abonnement']:
+        if offer_type not in ['seance', 'pack', 'abonnement', 'devis']:
             return Response({"message": "Type d'offre invalide."}, status=status.HTTP_400_BAD_REQUEST)
 
         coach = get_object_or_404(Coach.objects.select_related('user'), id=coach_id)
-        offres = _normalize_offres(coach.offres_tarifs)
-        amount = offres.get(offer_type)
+        if not coach.stripe_account_id:
+            return Response(
+                {"message": "Ce coach n'a pas encore configuré ses paiements. La transaction est impossible."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        devis = None
+        if offer_type == 'devis':
+            devis_filters = Q(id=request.data.get('devis_id'), coach=coach, statut='accepte') & (
+                Q(prospect=user) | Q(prospect__isnull=True, email__iexact=user.email)
+            )
+            devis = get_object_or_404(
+                Devis.objects.select_related('coach', 'prospect'),
+                devis_filters,
+            )
+            if devis.prospect_id is None:
+                devis.prospect = user
+                devis.save(update_fields=['prospect'])
+            if not devis.prix_propose:
+                return Response({"message": "Ce devis accepté n'a pas encore de prix proposé."}, status=status.HTTP_400_BAD_REQUEST)
+            amount = float(devis.prix_propose)
+            offer_label = {
+                'seance': 'Séance individuelle',
+                'pack': 'Pack',
+                'abonnement': 'Abonnement',
+            }.get(devis.offre_type, 'Devis personnalisé')
+        else:
+            offres = _normalize_offres(coach.offres_tarifs)
+            amount = offres.get(offer_type)
+            offer_label = self.OFFER_LABELS[offer_type]
 
-        card_number = ''.join(ch for ch in str(request.data.get('card_number', '')) if ch.isdigit())
-        cardholder_name = (request.data.get('cardholder_name') or '').strip()
-        email = (request.data.get('email') or user.email or '').strip()
-        phone = (request.data.get('phone') or '').strip()
+        try:
+            # 1. Création de l'intention de paiement Stripe
+            fee_amount = 0
+            if coach.platform_plan == 'free':
+                fee_amount = int((amount * 100) * 0.10)
 
-        if not card_number or len(card_number) < 12:
-            return Response({"message": "Numéro de carte invalide."}, status=status.HTTP_400_BAD_REQUEST)
+            intent_kwargs = {
+                "amount": int(amount * 100),
+                "currency": 'eur',
+                "metadata": {
+                    'checkout_type': 'prospect',
+                    'user_id': user.id,
+                    'coach_id': coach.id,
+                    'offer_type': offer_type,
+                    'offer_label': offer_label,
+                    'devis_id': devis.id if devis else ''
+                }
+            }
 
-        if not cardholder_name:
-            return Response({"message": "Nom du porteur requis."}, status=status.HTTP_400_BAD_REQUEST)
+            if coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": coach.stripe_account_id
+                }
 
-        payment_status = 'failed' if card_number.endswith('0002') or str(request.data.get('cvc', '')).strip() == '000' else 'success'
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
 
-        token_payload = {
-            "user_id": user.id,
-            "coach_id": coach.id,
-            "offer_type": offer_type,
-            "offer_label": self.OFFER_LABELS[offer_type],
-            "amount": amount,
-            "email": email,
-            "phone": phone,
-            "payment_status": payment_status,
-            "card_last4": card_number[-4:],
-        }
+            # 2. Création de ton token d'activation (CRUCIAL pour ne pas casser ton flux !)
+            token_payload = {
+                "user_id": user.id,
+                "coach_id": coach.id,
+                "offer_type": offer_type,
+                "offer_label": offer_label,
+                "amount": amount,
+                "payment_intent_id": intent.id,
+                "devis_id": devis.id if devis else None,
+            }
+            checkout_token = signing.dumps(token_payload, salt=CHECKOUT_SIGNER_SALT)
 
-        checkout_token = signing.dumps(token_payload, salt=CHECKOUT_SIGNER_SALT)
+            # 3. On renvoie le tout au frontend
+            return Response({
+                "client_secret": intent.client_secret,
+                "checkout_token": checkout_token,
+                "coach": _serialize_public_coach(coach),
+                "offer": {
+                    "type": offer_type,
+                    "label": offer_label,
+                    "price": amount,
+                }
+            }, status=status.HTTP_200_OK)
 
-        return Response({
-            "payment_status": payment_status,
-            "checkout_token": checkout_token,
-            "coach": _serialize_public_coach(coach),
-            "offer": {
-                "type": offer_type,
-                "label": self.OFFER_LABELS[offer_type],
-                "price": amount,
-            },
-            "message": "Paiement accepté." if payment_status == 'success' else "Paiement refusé.",
-        }, status=status.HTTP_200_OK)
-
+        except Exception as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ProspectCheckoutPreviewView(APIView):
     permission_classes = [IsAuthenticated]
@@ -329,8 +415,42 @@ class ProspectActivateAthleteView(APIView):
         if payload.get("user_id") != user.id:
             return Response({"message": "Session de paiement non autorisée."}, status=status.HTTP_403_FORBIDDEN)
 
-        if payload.get("payment_status") != "success":
-            return Response({"message": "Le paiement n'est pas validé."}, status=status.HTTP_400_BAD_REQUEST)
+        expected_payment_intent_id = payload.get("payment_intent_id")
+        provided_payment_intent_id = data.get("payment_intent_id")
+
+        if not expected_payment_intent_id or provided_payment_intent_id != expected_payment_intent_id:
+            return Response({"message": "Paiement invalide ou session altérée."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            intent = stripe.PaymentIntent.retrieve(provided_payment_intent_id)
+        except Exception:
+            return Response({"message": "Impossible de vérifier le paiement Stripe."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if intent.status != 'succeeded':
+            return Response({"message": "Le paiement Stripe n'est pas confirmé."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_metadata = intent.metadata
+        if raw_metadata is None:
+            intent_metadata = {}
+        elif isinstance(raw_metadata, dict):
+            intent_metadata = raw_metadata
+        elif hasattr(raw_metadata, 'to_dict_recursive'):
+            intent_metadata = raw_metadata.to_dict_recursive()
+        elif hasattr(raw_metadata, '_data') and isinstance(raw_metadata._data, dict):
+            intent_metadata = dict(raw_metadata._data)
+        else:
+            intent_metadata = {}
+        expected_amount_cents = int(float(payload.get("amount", 0)) * 100)
+
+        metadata_ok = (
+            intent_metadata.get('checkout_type') == 'prospect'
+            and str(intent_metadata.get('user_id')) == str(user.id)
+            and str(intent_metadata.get('coach_id')) == str(payload.get("coach_id"))
+            and str(intent_metadata.get('offer_type')) == str(payload.get("offer_type"))
+        )
+
+        if not metadata_ok or intent.amount != expected_amount_cents:
+            return Response({"message": "Paiement non conforme à la session de checkout."}, status=status.HTTP_400_BAD_REQUEST)
 
         coach = get_object_or_404(Coach, id=payload.get("coach_id"))
 
@@ -360,7 +480,7 @@ class ProspectActivateAthleteView(APIView):
                 "consentement_rgpd": data.get('consentement_rgpd', True),
             }
         )
-
+        
         if not created:
             athlete_profile.coach = coach
             athlete_profile.prenom = data['prenom']
@@ -380,6 +500,63 @@ class ProspectActivateAthleteView(APIView):
             athlete_profile.save()
 
         refresh = RefreshToken.for_user(user)
+        montant_ttc = payload.get("amount", 0)
+        commande = Commande.objects.create(
+            client=athlete_profile,
+            coach=coach,
+            offre_label=payload.get("offer_label"),
+            offre_type=payload.get("offer_type"),
+            montant_ttc=montant_ttc,
+            montant_ht=round(montant_ttc / 1.2, 2), # Calcul automatique du HT (TVA 20%)
+            status='PAID'
+        )
+
+        # 2. Génération automatique de l'entrée Facture
+        Facture.objects.create(commande=commande)
+
+        if payload.get("devis_id"):
+            Devis.objects.filter(id=payload.get("devis_id"), prospect=user, statut='accepte').update(invitation_liee=None)
+
+        _grant_contract_for_offer(
+            athlete_profile,
+            coach,
+            payload.get("offer_type"),
+            montant_ttc,
+        )
+
+        # 4. Email de bienvenue à l'athlète
+        try:
+            platform = request.data.get("platform", "web")
+            login_link = link_for_platform(platform, mobile_path="(tabs)/athlete", web_path="login")
+            coach_name = f"{coach.user.first_name} {coach.user.last_name}".strip()
+            send_html_email(
+                subject="ATHLO — Votre compte athlète est activé",
+                to=user.email,
+                greeting=f"Bienvenue sur ATHLO, {data['prenom']} !",
+                paragraphs=[
+                    "Votre paiement a été confirmé et votre compte athlète est maintenant actif.",
+                    f"Offre souscrite : <strong>{payload.get('offer_label')}</strong> — <strong>{payload.get('amount')}€</strong>",
+                    f"Votre coach : <strong>{coach_name}</strong>",
+                ],
+                cta_label="Accéder à mon espace",
+                cta_url=login_link,
+            )
+        except Exception:
+            pass  # L'activation ne doit pas échouer si l'email plante
+
+        # 5. Notification in-app pour le coach
+        try:
+            Notification.objects.create(
+                coach=coach,
+                seance=None,
+                type='PAIEMENT',
+                message=(
+                    f"Nouvel athlète inscrit : {data['prenom']} {data['nom']} "
+                    f"({payload.get('offer_label')}, {payload.get('amount')}€)."
+                ),
+            )
+        except Exception:
+            pass
 
         return Response({
             "message": "Paiement confirmé et profil athlète activé.",
@@ -413,20 +590,48 @@ class InvitationCheckoutPreviewView(APIView):
         if error_response:
             return error_response
 
-        return Response({
-            "coach": _serialize_public_coach(invitation.coach),
-            "offer": {
-                "type": invitation.offer_type,
-                "label": invitation.offer_label,
-                "price": invitation.amount,
-            },
-            "email": invitation.email,
-            "phone": invitation.phone,
-            "full_name": f"{invitation.client.prenom} {invitation.client.nom}".strip(),
-            "status": invitation.status,
-            "expires_at": invitation.expires_at,
-        }, status=status.HTTP_200_OK)
+        try:
+            # 1. Création de l'intention Stripe
+            import stripe
+            
+            fee_amount = 0
+            if invitation.coach.platform_plan == 'free':
+                fee_amount = int((invitation.amount * 100) * 0.10) # 10% de commission
 
+            intent_kwargs = {
+                "amount": int(invitation.amount * 100),
+                "currency": 'eur',
+                "metadata": {
+                    'checkout_type': 'invitation',
+                    'invitation_token': invitation.token
+                }
+            }
+
+            if invitation.coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": invitation.coach.stripe_account_id
+                }
+
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
+
+            # 2. On renvoie les données + le client_secret
+            return Response({
+                "client_secret": intent.client_secret, # Ajout crucial !
+                "coach": _serialize_public_coach(invitation.coach),
+                "offer": {
+                    "type": invitation.offer_type,
+                    "label": invitation.offer_label,
+                    "price": invitation.amount,
+                },
+                "email": invitation.email,
+                "phone": invitation.phone,
+                "full_name": f"{invitation.client.prenom} {invitation.client.nom}".strip(),
+                "status": invitation.status,
+                "expires_at": invitation.expires_at,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+             return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class InvitationCheckoutPayView(APIView):
     permission_classes = [AllowAny]
@@ -442,79 +647,40 @@ class InvitationCheckoutPayView(APIView):
 
         if invitation.status in ['paid', 'activated']:
             return Response(
-                {"message": "Cette invitation a déjà été réglée."},
+                {"message": "Cette invitation a déjà été utilisée."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        card_number = ''.join(ch for ch in str(data.get('card_number', '')) if ch.isdigit())
-        cvc = str(data.get('cvc', '')).strip()
-
-        if not card_number or len(card_number) < 12:
-            return Response({"message": "Numéro de carte invalide."}, status=status.HTTP_400_BAD_REQUEST)
-
-        payment_status = 'failed' if card_number.endswith('0002') or cvc == '000' else 'success'
-
+        # On met à jour l'email et le téléphone du prospect
         invitation.email = data['email']
         invitation.phone = data.get('phone', '')
-        invitation.card_last4 = card_number[-4:]
-        invitation.payment_status = payment_status
+        invitation.save(update_fields=['email', 'phone'])
 
-        if payment_status == 'success':
-            invitation.status = 'paid'
-            invitation.paid_at = timezone.now()
+        try:
+            # Création de l'intention de paiement Stripe
+            fee_amount = 0
+            if invitation.coach.platform_plan == 'free':
+                fee_amount = int((invitation.amount * 100) * 0.10) # 10% de commission
 
-            client = invitation.client
-            user = client.user
+            intent_kwargs = {
+                "amount": int(invitation.amount * 100),
+                "currency": 'eur',
+                "metadata": {
+                    'checkout_type': 'invitation',
+                    'invitation_token': invitation.token
+                }
+            }
 
-            client.email = data['email']
-            client.telephone = data.get('phone', '')
-            client.save(update_fields=['email', 'telephone'])
+            if invitation.coach.stripe_account_id:
+                intent_kwargs["application_fee_amount"] = fee_amount
+                intent_kwargs["transfer_data"] = {
+                    "destination": invitation.coach.stripe_account_id
+                }
 
-            user.email = data['email']
-            user.username = data['email']
-            user.save(update_fields=['email', 'username'])
-
-            invitation.save(update_fields=[
-                'email',
-                'phone',
-                'card_last4',
-                'payment_status',
-                'status',
-                'paid_at',
-            ])
-
-            NotificationMessage = (
-                f"Paiement confirmé pour {client.prenom} {client.nom} "
-                f"({invitation.offer_label} - {invitation.amount:.2f} €)."
-            )
-
-            from .models import Notification
-            Notification.objects.create(
-                coach=invitation.coach,
-                seance=None,
-                type='PAIEMENT',
-                message=NotificationMessage
-            )
-
-            set_password_link = f"{settings.FRONTEND_URL}/invite/set-password?token={invitation.token}"
-
-            _send_email(
-                subject="ATHLO - Paiement confirmé, activez votre compte",
-                message=(
-                    f"Bonjour {client.prenom},\n\n"
-                    f"Votre paiement a bien été validé.\n\n"
-                    f"Pour activer votre compte ATHLO et définir votre mot de passe, "
-                    f"cliquez sur ce lien :\n{set_password_link}\n\n"
-                    f"Ce lien vous permettra d'accéder ensuite à votre espace client.\n\n"
-                    f"L'équipe ATHLO"
-                ),
-                recipient=invitation.email
-            )
-
+            intent = stripe.PaymentIntent.create(**intent_kwargs)
+            
             return Response({
-                "payment_status": "success",
-                "message": "Paiement validé.",
-                "activation_token": invitation.token,
+                "client_secret": intent.client_secret,
                 "coach": _serialize_public_coach(invitation.coach),
                 "offer": {
                     "type": invitation.offer_type,
@@ -523,18 +689,8 @@ class InvitationCheckoutPayView(APIView):
                 },
             }, status=status.HTTP_200_OK)
 
-        invitation.save(update_fields=[
-            'email',
-            'phone',
-            'card_last4',
-            'payment_status',
-        ])
-
-        return Response({
-            "payment_status": "failed",
-            "message": "Paiement refusé.",
-        }, status=status.HTTP_200_OK)
-
+        except Exception as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class InvitationSetPasswordView(APIView):
     permission_classes = [AllowAny]
@@ -547,6 +703,43 @@ class InvitationSetPasswordView(APIView):
         invitation, error_response = _get_valid_invitation_or_response(data['token'])
         if error_response:
             return error_response
+
+        # If invitation is still pending, try to verify payment directly via Stripe
+        # (covers mobile flow where webhook may not have fired yet)
+        payment_intent_id = (data.get('payment_intent_id') or '').strip() or None
+        if invitation.status == 'pending':
+            if payment_intent_id:
+                try:
+                    intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                    if intent.status != 'succeeded':
+                        return Response({"message": "Paiement non confirmé."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    # Normalise metadata (StripeObject in SDK v15+)
+                    raw_metadata = intent.metadata
+                    if raw_metadata is None:
+                        intent_metadata = {}
+                    elif isinstance(raw_metadata, dict):
+                        intent_metadata = raw_metadata
+                    elif hasattr(raw_metadata, 'to_dict_recursive'):
+                        intent_metadata = raw_metadata.to_dict_recursive()
+                    elif hasattr(raw_metadata, '_data') and isinstance(raw_metadata._data, dict):
+                        intent_metadata = dict(raw_metadata._data)
+                    else:
+                        intent_metadata = {}
+
+                    if intent_metadata.get('checkout_type') != 'invitation':
+                        return Response({"message": "Ce paiement ne correspond pas à une invitation."}, status=status.HTTP_400_BAD_REQUEST)
+                    if intent_metadata.get('invitation_token') != str(invitation.token):
+                        return Response({"message": "Ce paiement ne correspond pas à cette invitation."}, status=status.HTTP_400_BAD_REQUEST)
+                    if intent.amount != int(invitation.amount * 100):
+                        return Response({"message": "Le montant du paiement ne correspond pas à l'offre."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    invitation.status = 'paid'
+                    invitation.payment_status = 'success'
+                    invitation.paid_at = timezone.now()
+                    invitation.save(update_fields=['status', 'payment_status', 'paid_at'])
+                except Exception:
+                    pass
 
         if invitation.status != 'paid':
             return Response(
@@ -571,21 +764,70 @@ class InvitationSetPasswordView(APIView):
         invitation.activated_at = timezone.now()
         invitation.save(update_fields=['status', 'activated_at'])
 
-        _send_email(
-            subject="ATHLO - Votre compte est prêt",
-            message=(
-                f"Bonjour {invitation.client.prenom},\n\n"
-                f"Votre compte ATHLO est maintenant activé.\n\n"
-                f"Vous pouvez vous connecter avec :\n"
-                f"Email : {user.email}\n"
-                f"Connexion : {settings.FRONTEND_URL}/login\n\n"
-                f"L'équipe ATHLO"
-            ),
-            recipient=user.email
+        # Création de la Commande + Facture (absentes avant ce correctif)
+        try:
+            montant_ttc = invitation.amount
+            if payment_intent_id:
+                commande, created = Commande.objects.get_or_create(
+                    stripe_payment_intent_id=payment_intent_id,
+                    defaults={
+                        'client': invitation.client,
+                        'coach': invitation.coach,
+                        'offre_label': invitation.offer_label,
+                        'offre_type': invitation.offer_type,
+                        'montant_ttc': montant_ttc,
+                        'montant_ht': round(montant_ttc / 1.2, 2),
+                        'status': 'PAID',
+                    }
+                )
+            else:
+                commande = Commande.objects.create(
+                    client=invitation.client,
+                    coach=invitation.coach,
+                    offre_label=invitation.offer_label,
+                    offre_type=invitation.offer_type,
+                    montant_ttc=montant_ttc,
+                    montant_ht=round(montant_ttc / 1.2, 2),
+                    status='PAID',
+                )
+                created = True
+            if created:
+                Facture.objects.create(commande=commande)
+            _grant_contract_for_offer(
+                invitation.client,
+                invitation.coach,
+                invitation.offer_type,
+                montant_ttc,
+            )
+        except Exception:
+            pass  # La facturation ne doit pas bloquer l'activation
+
+        platform = request.data.get("platform", "web")
+        login_link = link_for_platform(platform, mobile_path="(tabs)/athlete", web_path="login")
+        send_html_email(
+            subject="ATHLO — Votre compte est prêt",
+            to=user.email,
+            greeting=f"Bienvenue, {invitation.client.prenom} !",
+            paragraphs=[
+                "Votre mot de passe a été défini et votre compte ATHLO est maintenant prêt.",
+                f"Utilisez votre adresse email <strong>{user.email}</strong> pour vous connecter.",
+            ],
+            cta_label="Accéder à mon espace",
+            cta_url=login_link,
         )
 
+        # Return JWT tokens so mobile can auto-login (web ignores these fields)
+        refresh = RefreshToken.for_user(user)
         return Response({
-            "message": "Compte activé avec succès."
+            "message": "Compte activé avec succès.",
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": f"{user.first_name} {user.last_name}".strip(),
+                "role": "athlete",
+            },
         }, status=status.HTTP_200_OK)
 
 
@@ -595,15 +837,20 @@ class PublicSalleListView(APIView):
     def get(self, request):
         lat = request.query_params.get('lat')
         lng = request.query_params.get('lng')
+        ville = (request.query_params.get('ville') or '').strip()
         rayon = request.query_params.get('rayon', 10)
 
         salles = Salle.objects.all()
+        if ville:
+            salles = salles.filter(ville__icontains=ville)
+
+        has_geo = bool(lat and lng)
         results = []
 
         for salle in salles:
             distance = None
 
-            if lat and lng and salle.latitude is not None and salle.longitude is not None:
+            if has_geo and salle.latitude is not None and salle.longitude is not None:
                 distance = calcul_distance(
                     float(lat),
                     float(lng),
@@ -633,13 +880,19 @@ class ProspectDemandeDevisView(APIView):
     def get(self, request):
         email = (request.query_params.get('email') or '').strip()
 
-        if not email:
+        if request.user.is_authenticated:
+            filters = Q(prospect=request.user)
+            if email:
+                filters |= Q(prospect__isnull=True, email__iexact=email)
+            devis = Devis.objects.filter(filters).select_related('coach__user', 'invitation_liee').distinct().order_by('-id')
+        elif email:
+            devis = Devis.objects.filter(email__iexact=email).select_related('coach__user', 'invitation_liee').order_by('-id')
+        else:
             return Response(
                 {"message": "Email manquant pour récupérer l'historique."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        devis = Devis.objects.filter(email__iexact=email).select_related('coach__user').order_by('-id')
         serializer = DevisSerializer(devis, many=True)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -650,9 +903,18 @@ class ProspectDemandeDevisView(APIView):
 
         data = serializer.validated_data
         coach = get_object_or_404(Coach, id=data['coach_id'])
+        budget = str(data.get('budget', '')).replace(',', '.').strip()
+        try:
+            prix_propose = float(budget)
+        except (TypeError, ValueError):
+            return Response({"message": "Prix proposé invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        if prix_propose <= 0:
+            return Response({"message": "Le prix proposé doit être supérieur à 0."}, status=status.HTTP_400_BAD_REQUEST)
 
         devis = Devis.objects.create(
             coach=coach,
+            prospect=request.user if request.user.is_authenticated else None,
+            offre_type=data.get('offreType', 'seance'),
             nom=data['nom'],
             prenom=data['prenom'],
             email=data['email'],
@@ -664,9 +926,20 @@ class ProspectDemandeDevisView(APIView):
             type_entrainement=data.get('typeEntrainement', ''),
             objectif_sportif=data.get('objectifSportif', ''),
             budget=data.get('budget', ''),
+            prix_propose=prix_propose,
             pathologies_blessures=data.get('pathologiesBlessures', ''),
             message=data.get('message', ''),
         )
+
+        try:
+            Notification.objects.create(
+                coach=coach,
+                seance=None,
+                type='INFO',
+                message=f"Nouvelle demande de devis ({devis.get_offre_type_display()}) de {devis.prenom} {devis.nom} pour {prix_propose:.2f}€.",
+            )
+        except Exception:
+            pass
 
         return Response(
             {

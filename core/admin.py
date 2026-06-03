@@ -1,11 +1,16 @@
 from django.contrib import admin
 from .models import (
+    CategorieProduit,
     Coach,
     Client,
     ClientInvitation,
     Exercice,
     NotificationAthlete,
+    PlanNutritionnel,
+    Produit,
     Programme,
+    Recette,
+    Recette,
     Seance,
     SeanceExercice,
     Inscription,
@@ -14,6 +19,8 @@ from .models import (
     Message,
     MessageAttachment,
     Performance,
+    Commande,
+    LigneCommande, Salle, ResponsableSalle
 )
 
 # Profils
@@ -28,7 +35,11 @@ admin.site.register(Seance)
 admin.site.register(SeanceExercice)
 admin.site.register(Performance)
 
+admin.site.register(Recette)
+admin.site.register(PlanNutritionnel)
 
+admin.site.register(Salle)
+admin.site.register(ResponsableSalle)
 @admin.register(Inscription)
 class InscriptionAdmin(admin.ModelAdmin):
     list_display = ('client', 'seance', 'statut', 'date_inscription')
@@ -65,3 +76,29 @@ class MessageAttachmentAdmin(admin.ModelAdmin):
 
 
 admin.site.register(NotificationAthlete)
+# --- NOUVEAU : Gestion des catégories de la boutique ---
+@admin.register(CategorieProduit)
+class CategorieProduitAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'slug')
+    # Ceci remplit automatiquement le champ 'slug' en tapant le nom 
+    # (ex: "Programmes PDF" -> "programmes-pdf")
+    prepopulated_fields = {'slug': ('nom',)} 
+
+@admin.register(Produit)
+class ProduitAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'coach', 'prix', 'stock', 'est_actif')
+    list_filter = ('type_produit', 'categorie', 'est_actif')
+    search_fields = ('nom', 'coach__user__username')
+    
+# --- AJOUTEZ CECI À LA TOUTE FIN DE VOTRE FICHIER admin.py ---
+
+# core/admin.py
+@admin.register(Commande)
+class CommandeAdmin(admin.ModelAdmin):
+    # On remplace 'statut' par 'status' et 'total' par 'montant_ttc'
+    list_display = ('order_number', 'client', 'status', 'montant_ttc', 'date_commande')
+    list_filter = ('status',)
+    search_fields = ('order_number', 'client__user__last_name')
+@admin.register(LigneCommande)
+class LigneCommandeAdmin(admin.ModelAdmin):
+    list_display = ('commande', 'produit', 'quantite', 'prix_unitaire')

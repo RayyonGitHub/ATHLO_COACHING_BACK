@@ -2,7 +2,7 @@
 
 ## Contexte
 
-Ce dépôt contient le **Back-End** de l'application **Athlo**, développé avec **Django 6** et le **Django REST Framework**.  
+Ce dépôt contient le **Back-End** de l'application **Athlo**, développé avec **Django 5.2** et le **Django REST Framework**.  
 Le back expose des API REST pour que le Front-End et d'autres clients puissent interagir avec les données (utilisateurs, séances, programmes, contrats, paiements, etc.).
 
 ---

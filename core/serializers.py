@@ -1,34 +1,106 @@
 from rest_framework import serializers
 import datetime
+import json
 from django.utils import timezone
 from django.db.models import Avg, Count
 from .models import (
     Client, Coach, Exercice, Programme, Seance, 
     SeanceExercice, Performance, Indisponibilite, 
-    Inscription, Notification, NotificationAthlete, Salle, Avis, Devis,
+    Inscription, Notification, NotificationAthlete, NotificationResponsable, Salle, Avis, Devis,
+    ActiviteExterne, Produit, CategorieProduit, Commande, LigneCommande, Facture, ContratAthlete
 )
 
 # --- PROFILS ---
+def normalize_offres_tarifs(raw_offres):
+    defaults = {"seance": 60, "pack": 500, "abonnement": 180}
+    if isinstance(raw_offres, str):
+        try:
+            raw_offres = json.loads(raw_offres)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_offres = {}
+    if not isinstance(raw_offres, dict):
+        raw_offres = {}
+    return {
+        key: raw_offres.get(key, defaults[key])
+        for key in defaults
+    }
+
+
 class ClientSerializer(serializers.ModelSerializer):
+    invitation_status = serializers.SerializerMethodField()
+    coach_offres_tarifs = serializers.SerializerMethodField()
+    coach_stripe_onboarding_complete = serializers.SerializerMethodField()
+    contrat = serializers.SerializerMethodField()
+
     class Meta:
         model = Client
         fields = '__all__'
         read_only_fields = ['coach', 'user']
 
+    def get_invitation_status(self, obj):
+        latest = obj.payment_invitations.order_by('-created_at').first()
+        return latest.status if latest else None
+
+    def get_coach_offres_tarifs(self, obj):
+        return normalize_offres_tarifs(obj.coach.offres_tarifs if obj.coach else {})
+
+    def get_coach_stripe_onboarding_complete(self, obj):
+        return bool(obj.coach and obj.coach.stripe_onboarding_complete)
+
+    def get_contrat(self, obj):
+        contrat = obj.contrat_actif
+        if not contrat:
+            return {
+                "type": None,
+                "statut": "AUCUN",
+                "valide": False,
+                "date_expiration": None,
+                "seances_restantes": obj.seances_restantes or 0,
+                "label": "Aucun contrat actif",
+            }
+        return {
+            "id": contrat.id,
+            "type": contrat.type_contrat,
+            "statut": contrat.statut,
+            "valide": contrat.est_valide,
+            "date_expiration": contrat.date_expiration,
+            "seances_restantes": contrat.seances_restantes if contrat.type_contrat != 'ABONNEMENT' else None,
+            "label": contrat.get_type_contrat_display(),
+        }
+
+
+class ContratAthleteSerializer(serializers.ModelSerializer):
+    valide = serializers.ReadOnlyField(source='est_valide')
+
+    class Meta:
+        model = ContratAthlete
+        fields = ['id', 'type_contrat', 'statut', 'date_debut', 'date_expiration', 'seances_total', 'seances_restantes', 'montant_ttc', 'valide']
+
 class CoachSerializer(serializers.ModelSerializer):
+    salles = serializers.PrimaryKeyRelatedField(many=True, queryset=Salle.objects.all(), required=False)
+    
     class Meta:
         model = Coach
-        fields = ['id', 'specialites_tags', 'offres_tarifs', 'telephone', 'specialite', 'ville']
-
-
+        fields = [
+            'id', 'specialites_tags', 'offres_tarifs', 'telephone', 
+            'specialite', 'ville', 'salles', 
+            'platform_plan', 'stripe_account_id', 'stripe_onboarding_complete'
+        ]
+        read_only_fields = ['platform_plan', 'stripe_account_id', 'stripe_onboarding_complete']
+    
+    def validate_salles(self, salles):
+        coach = self.instance
+        if coach:
+            for salle in salles:
+                if coach in salle.coachs_bannis.all():
+                    raise serializers.ValidationError(f"Vous avez été définitivement retiré de la salle {salle.nom}. Contactez le responsable.")
+        return salles
 # --- SERIALIZER PUBLIC POUR LES PROSPECTS ---
 class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
     duree = serializers.SerializerMethodField()
-
     class Meta:
         model = Programme
         fields = ['id', 'titre', 'duree']
-
     def get_duree(self, obj):
         nb = obj.seances.count()
         if nb <= 0:
@@ -37,9 +109,12 @@ class ProspectProgrammePreviewSerializer(serializers.ModelSerializer):
             return "1 séance"
         return f"{nb} séances"
 
-
 class ProspectCoachSerializer(serializers.ModelSerializer):
     nom = serializers.SerializerMethodField()
+    first_name = serializers.ReadOnlyField(source='user.first_name')
+    last_name = serializers.ReadOnlyField(source='user.last_name')
+    full_name = serializers.SerializerMethodField()
+    email = serializers.ReadOnlyField(source='user.email')
     specialites = serializers.SerializerMethodField()
     note = serializers.SerializerMethodField()
     avis = serializers.SerializerMethodField()
@@ -53,6 +128,10 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'nom',
+            'first_name',
+            'last_name',
+            'full_name',
+            'email',
             'specialites',
             'note',
             'avis',
@@ -65,6 +144,9 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
         ]
 
     def get_nom(self, obj):
+        return self.get_full_name(obj)
+
+    def get_full_name(self, obj):
         full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
         if full_name:
             return full_name
@@ -87,13 +169,12 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
         return obj.avis.count()
 
     def get_distance(self, obj):
-        # Pas de vraie géolocalisation exploitable dans tes modèles pour l’instant.
+        # Pas de vraie géolocalisation exploitable dans tes modèles pour l instant.
         # On renvoie la ville si dispo pour éviter le statique mensonger.
         return obj.ville if obj.ville else "Ville non renseignée"
 
     def get_tarifs(self, obj):
         tarifs = obj.offres_tarifs if isinstance(obj.offres_tarifs, dict) else {}
-
         return {
             "seance": tarifs.get("seance", 0),
             "pack": tarifs.get("pack", 0),
@@ -107,6 +188,7 @@ class ProspectCoachSerializer(serializers.ModelSerializer):
     def get_image(self, obj):
         return None
         
+
 # --- SPORTIFS ---
 class ExerciceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -115,7 +197,6 @@ class ExerciceSerializer(serializers.ModelSerializer):
 
 class SeanceExerciceSerializer(serializers.ModelSerializer):
     exercice_details = ExerciceSerializer(source='exercice', read_only=True)
-
     class Meta:
         model = SeanceExercice
         fields = '__all__'
@@ -123,7 +204,6 @@ class SeanceExerciceSerializer(serializers.ModelSerializer):
 class InscriptionDetailsSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField()
     client_id = serializers.ReadOnlyField(source='client.id')
-
     class Meta:
         model = Inscription
         fields = ['id', 'client_id', 'client_name', 'statut', 'date_inscription']
@@ -140,11 +220,25 @@ class SeanceSerializer(serializers.ModelSerializer):
     places_restantes = serializers.SerializerMethodField()
     est_inscrit = serializers.SerializerMethodField()
     mon_statut = serializers.SerializerMethodField()
+    athlete_nom = serializers.SerializerMethodField()
+    athlete_prenom = serializers.SerializerMethodField()
 
     class Meta:
         model = Seance
         fields = '__all__'
         read_only_fields = ['coach']
+
+    def get_athlete_nom(self, obj):
+        if obj.programme and obj.programme.athlete:
+            return obj.programme.athlete.nom
+        ins = obj.inscriptions.filter(statut='CONFIRME').first() or obj.inscriptions.first()
+        return ins.client.nom if ins else None
+
+    def get_athlete_prenom(self, obj):
+        if obj.programme and obj.programme.athlete:
+            return obj.programme.athlete.prenom
+        ins = obj.inscriptions.filter(statut='CONFIRME').first() or obj.inscriptions.first()
+        return ins.client.prenom if ins else None
 
     def get_nombre_inscrits(self, obj):
         if not hasattr(obj, 'inscriptions'):
@@ -194,7 +288,6 @@ class SeanceSerializer(serializers.ModelSerializer):
     def validate(self, data):
         request = self.context.get('request')
         coach = None
-
         if request and hasattr(request.user, 'coach_profile'):
             coach = request.user.coach_profile
         elif 'programme' in data and data['programme']:
@@ -221,7 +314,7 @@ class SeanceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "jour_prevu": "Vous ne pouvez pas planifier une séance à une date passée."
                 })
-
+            
             if nouveau_jour == date_aujourdhui and nouvelle_heure_debut:
                 if nouvelle_heure_debut < heure_actuelle:
                     raise serializers.ValidationError({
@@ -232,7 +325,6 @@ class SeanceSerializer(serializers.ModelSerializer):
             return data
 
         from .models import Seance, Indisponibilite
-
         seances_chevauchees = Seance.objects.filter(
             coach=coach,
             jour_prevu=nouveau_jour,
@@ -292,6 +384,7 @@ class IndisponibiliteSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['coach']
 
+
 # --- NOTIFICATIONS ---
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -305,6 +398,7 @@ class NotificationAthleteSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'client', 'date_creation']
 
+
 class SalleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Salle
@@ -317,8 +411,12 @@ class AvisSerializer(serializers.ModelSerializer):
         model = Avis
         fields = '__all__'
 
+
 class ProspectCoachListSerializer(serializers.ModelSerializer):
     nom = serializers.SerializerMethodField()
+    first_name = serializers.ReadOnlyField(source='user.first_name')
+    last_name = serializers.ReadOnlyField(source='user.last_name')
+    full_name = serializers.SerializerMethodField()
     email = serializers.ReadOnlyField(source='user.email')
     note_moyenne = serializers.SerializerMethodField()
     nombre_avis = serializers.SerializerMethodField()
@@ -330,6 +428,9 @@ class ProspectCoachListSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'nom',
+            'first_name',
+            'last_name',
+            'full_name',
             'email',
             'telephone',
             'ville',
@@ -343,8 +444,11 @@ class ProspectCoachListSerializer(serializers.ModelSerializer):
         ]
 
     def get_nom(self, obj):
+        return self.get_full_name(obj)
+
+    def get_full_name(self, obj):
         full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
-        return full_name if full_name else obj.user.username
+        return full_name if full_name else obj.user.username or obj.user.email
 
     def get_note_moyenne(self, obj):
         avis = obj.avis.all()
@@ -365,10 +469,10 @@ class ProspectCoachListSerializer(serializers.ModelSerializer):
             }
             for p in programmes
         ]
+
     def get_distance_km(self, obj):
         distance_map = self.context.get("distance_map", {})
         d = distance_map.get(obj.id)
-
         if d is None:
             return None
         return round(d, 2)
@@ -380,8 +484,10 @@ class ProspectCoachDetailSerializer(ProspectCoachListSerializer):
     class Meta(ProspectCoachListSerializer.Meta):
         fields = ProspectCoachListSerializer.Meta.fields + ['avis']
 
+
 class DevisSerializer(serializers.ModelSerializer):
     coach_nom = serializers.SerializerMethodField()
+    invitation_token = serializers.SerializerMethodField()
 
     class Meta:
         model = Devis
@@ -390,3 +496,59 @@ class DevisSerializer(serializers.ModelSerializer):
     def get_coach_nom(self, obj):
         full_name = f"{obj.coach.user.first_name} {obj.coach.user.last_name}".strip()
         return full_name or obj.coach.user.username
+
+    def get_invitation_token(self, obj):
+        if obj.invitation_liee:
+            return str(obj.invitation_liee.token)
+        return None
+
+
+# --- Serializer pour les activités Strava/Garmin ---
+class ActiviteExterneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ActiviteExterne
+        fields = '__all__'
+
+# --- Serializers pour la Boutique ---
+class ProduitSerializer(serializers.ModelSerializer):
+    categorie_nom = serializers.ReadOnlyField(source='categorie.nom')
+    coach_nom = serializers.ReadOnlyField(source='coach.user.username')
+
+    class Meta:
+        model = Produit
+        fields = '__all__'
+        read_only_fields = ['coach']
+
+class CategorieProduitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CategorieProduit
+        fields = '__all__'
+
+# --- Serializers pour les Commandes et Factures ---
+class FactureSerializer(serializers.ModelSerializer):
+    pdf_file = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Facture
+        fields = ['id', 'numero_facture', 'date_emission', 'pdf_file']
+
+    def get_pdf_file(self, obj):
+        if obj.pdf_file:
+            return obj.pdf_file.url  # Renvoie le chemin relatif (ex: /media/factures/...)
+        return None
+
+class CommandeSerializer(serializers.ModelSerializer):
+    facture = FactureSerializer(read_only=True)
+
+    class Meta:
+        model = Commande
+        fields = [
+            'id', 'order_number', 'offre_label', 'offre_type', 
+            'montant_ttc', 'frais_livraison', 'status', 'date_commande', 'facture'
+        ]
+
+
+class NotificationResponsableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationResponsable
+        fields = ['id', 'message', 'type', 'est_lu', 'date_creation']

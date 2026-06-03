@@ -5,18 +5,23 @@ class PublicCoachSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     nom = serializers.CharField()
     prenom = serializers.CharField(allow_blank=True)
+    first_name = serializers.CharField(allow_blank=True)
+    last_name = serializers.CharField(allow_blank=True)
     full_name = serializers.CharField()
+    email = serializers.EmailField(allow_blank=True)
     ville = serializers.CharField(allow_blank=True)
     specialites = serializers.ListField(child=serializers.CharField(), default=list)
     note = serializers.FloatField()
     avis = serializers.IntegerField()
     tarifs = serializers.DictField()
     programmes_gratuits = serializers.ListField(child=serializers.DictField(), default=list)
+    salles = serializers.ListField(child=serializers.DictField(), default=list)
     image = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
 class ProspectActivateAthleteSerializer(serializers.Serializer):
     checkout_token = serializers.CharField()
+    payment_intent_id = serializers.CharField()
 
     prenom = serializers.CharField(max_length=100)
     nom = serializers.CharField(max_length=100)
@@ -47,6 +52,7 @@ class ProspectActivateAthleteSerializer(serializers.Serializer):
 
 class ProspectDevisCreateSerializer(serializers.Serializer):
     coach_id = serializers.IntegerField()
+    offreType = serializers.ChoiceField(choices=['seance', 'pack', 'abonnement'], default='seance')
 
     nom = serializers.CharField(max_length=100)
     prenom = serializers.CharField(max_length=100)
@@ -69,19 +75,14 @@ class InvitationCheckoutPaySerializer(serializers.Serializer):
     invitation_token = serializers.CharField()
     email = serializers.EmailField()
     phone = serializers.CharField(max_length=20, allow_blank=True, required=False)
-
-    card_number = serializers.CharField()
-    expiry = serializers.CharField()
-    cvc = serializers.CharField()
-    cardholder_name = serializers.CharField()
-
-    billing_address = serializers.DictField(required=False)
+    
 
 
 class InvitationSetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField()
     new_password = serializers.CharField()
     confirm_password = serializers.CharField()
+    payment_intent_id = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
         if attrs['new_password'] != attrs['confirm_password']:
