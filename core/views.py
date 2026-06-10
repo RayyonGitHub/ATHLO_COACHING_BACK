@@ -198,7 +198,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         if hasattr(self.request.user, 'coach_profile'): #.order_by('nom','prenom')
-            return Client.objects.filter(coach=self.request.user.coach_profile)
+            return Client.objects.filter(coach=self.request.user.coach_profile).order_by('nom','prenom')
         return Client.objects.none()
 
     def _get_default_offer_for_invitation(self, coach):
